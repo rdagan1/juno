@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+// moodle-token — get a Moodle web-service token for agent/moodle-mcp.
+//
+// Usage:
+//   moodle-token login <site-url> <username>      password sites (prompts for password)
+//   moodle-token sso <site-url>                   SSO sites: prints a launch URL to open
+//   moodle-token decode <moodlemobile://token=…>  SSO sites: decode the redirect you got back
+//
+// Prints the token; put it in .env as MOODLE_TOKEN. See docs/integrations/moodle.md.
+
+import { createInterface } from "node:readline";
+import { randomInt } from "node:crypto";
+
+const [cmd, a1, a2] = process.argv.slice(2);
+const SERVICE = process.env.MOODLE_SERVICE || "moodle_mobile_app";
+
+function usage() {
+  console.error("usage: moodle-token login <site-url> <username> | sso <site-url> | decode <moodlemobile://token=...>");
+  process.exit(2);
+}
+
+function promptHidden(q) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    rl._writeToOutput = (s) => { if (s.includes(q)) process.stderr.write(s); };
+    rl.question(q, (ans) => { rl.close(); process.stderr.write("\n"); resolve(ans); });
+  });
+}
+
+if (cmd === "login") {
+  if (!a1 || !a2) usage();
+  const password = process.env.MOODLE_PASSWORD || (await promptHidden("Moodle password: "));
+  const res = await fetch(`${a1.replace(/\/+$/, "")}/login/token.php`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username: a2, password, service: SERVICE }),
+  });
+  const data = await res.json();
+  if (!data.token) {
+    console.error(`login failed: ${data.error || res.status}${data.errorcode === "invalidlogin" ? "" : " — if your site uses SSO, try `moodle-token sso`"}`);
+    process.exit(1);
+  }
+  console.log(data.token);
+} else if (cmd === "sso") {
+  if (!a1) usage();
+  const passport = String(randomInt(1, 2 ** 31));
+  console.log(`${a1.replace(/\/+$/, "")}/admin/tool/mobile/launch.php?service=${SERVICE}&passport=${passport}&urlscheme=moodlemobile`);
+  console.error("\nOpen that URL in a desktop browser with DevTools → Network open, log in, and copy the");
+  console.error("final 'moodlemobile://token=…' redirect URL. Then run: moodle-token decode '<that url>'");
+} else if (cmd === "decode") {
+  if (!a1) usage();
+  const m = a1.match(/token=([A-Za-z0-9+/=_-]+)/);
+  if (!m) { console.error("no token= found in input"); process.exit(1); }
+  const parts = Buffer.from(m[1], "base64").toString("utf8").split(":::");
+  if (parts.length < 2) { console.error("unexpected token payload"); process.exit(1); }
+  console.log(parts[1]);
+} else {
+  usage();
+}

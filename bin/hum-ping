@@ -33,6 +33,8 @@ import { spawnSync } from "node:child_process";
 import { canonicalKey, canonicalDisplay, canonicalAttrs } from "../lib/suggestion-key.mjs";
 import { shouldFilter } from "../lib/suggestion-recall.mjs";
 import { appendSurfaced } from "../lib/suggestion-history.mjs";
+import { createRequire } from "node:module";
+createRequire(import.meta.url)("../lib/load-env.js").loadEnv();
 
 const args = process.argv.slice(2);
 function flag(name, hasValue = true) {
@@ -134,7 +136,13 @@ if (noPush) sendArgs.push("--no-push");
 if (pushBody) sendArgs.push("--push-body", pushBody);
 sendArgs.push(message);
 
-const sendResult = spawnSync(SEND_BIN, sendArgs, { encoding: "utf8" });
+// WhatsApp hosts (WHATSAPP_OWNER set) deliver through the whatsapp-channel
+// daemon instead. No message id comes back, so the feedback row is logged
+// with capture_id_missing; reactions are matched by time window instead.
+const WHATSAPP_BIN = path.join(path.dirname(new URL(import.meta.url).pathname), "whatsapp-send");
+const sendResult = process.env.WHATSAPP_OWNER
+  ? spawnSync(WHATSAPP_BIN, [message], { encoding: "utf8" })
+  : spawnSync(SEND_BIN, sendArgs, { encoding: "utf8" });
 if (sendResult.status !== 0) {
   try { fs.unlinkSync(captureFile); } catch {}
   console.error(`hum-ping: send failed (exit ${sendResult.status})`);

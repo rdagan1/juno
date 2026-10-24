@@ -103,6 +103,7 @@ If you're putting Merlin on a dedicated machine (Mac mini, Intel NUC, Raspberry 
 | `gh` | Some Merlin scripts use `gh` to inspect runs/issues; without it those features short-circuit silently. |
 | `op` (1Password CLI) | Lets you reference secrets via `op://Vault/Item/field` instead of plaintext in `.env`. See [`docs/hardening.md`](hardening.md). |
 | Chrome + chrome-devtools-mcp | If you want agent-driven browser automation (the gandalf source used this for Tripit scraping, lottery entries, etc.). Not wired into any shipping job. |
+| `pdftotext` (poppler) | Lets `moodle_get_file` return the text of lecture PDFs (`brew install poppler` / `apt install poppler-utils`). Without it the PDF is still saved locally, just not extracted. |
 | Python 3 | Spotter's `ci/distribute_external.py` uses Python. Not needed if you're not building the iOS apps. |
 
 ## Hardware notes

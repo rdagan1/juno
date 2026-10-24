@@ -52,6 +52,20 @@
       "cache_ttl_min": 60,
       "active_window": "sat-sun 09:00-18:00",
       "_note": "deferred — needs a richer places-scoring backend. Disabled by default."
+    },
+    {
+      "name": "moodle-deadlines",
+      "enabled": true,
+      "cadence_min": 60,
+      "cache_ttl_min": 30,
+      "active_window": "daily"
+    },
+    {
+      "name": "moodle-updates",
+      "enabled": true,
+      "cadence_min": 60,
+      "cache_ttl_min": 30,
+      "active_window": "daily"
     }
   ]
 }
