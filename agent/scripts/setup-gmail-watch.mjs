@@ -19,14 +19,17 @@ import { google } from "googleapis";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+createRequire(import.meta.url)("../../lib/load-env.js").loadEnv();
 const ROOT = join(__dirname, "..");
 const CREDS_PATH = join(ROOT, "..", "credentials", "gmail-oauth.json");
 const TOKEN_PATH = join(ROOT, "..", "data", "gmail-push-token.json");
 
-// UPDATE THIS to your Google Cloud project ID
-const PROJECT_ID = "${MERLIN_GCP_PROJECT}";
+// Your Google Cloud project ID, from .env.
+const PROJECT_ID = process.env.MERLIN_GCP_PROJECT;
+if (!PROJECT_ID) { console.error("MERLIN_GCP_PROJECT not set (.env)"); process.exit(1); }
 const TOPIC_NAME = `projects/${PROJECT_ID}/topics/gmail-new-messages`;
 
 async function getAuthClient() {

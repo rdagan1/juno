@@ -1,0 +1,12 @@
+# merlin-heartbeat.timer — run merlin-heartbeat.service every 2 minutes.
+
+[Unit]
+Description=Merlin heartbeat every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+# merlin-heartbeat.service — one heartbeat snapshot (Linux). Triggered by
+# merlin-heartbeat.timer; the counterpart of the com.example.merlin-heartbeat
+# LaunchAgent on macOS. Installed by scripts/install-systemd.sh.
+
+[Unit]
+Description=Merlin heartbeat snapshot
+
+[Service]
+Type=oneshot
+WorkingDirectory=@MERLIN_HOME@
+Environment=MERLIN_HOME=@MERLIN_HOME@
+Environment=PATH=@PATH@
+ExecStart=@MERLIN_HOME@/agent/scripts/heartbeat-sender.sh

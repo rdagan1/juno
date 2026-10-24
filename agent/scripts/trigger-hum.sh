@@ -1,5 +1,5 @@
 #!/bin/bash
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 source "$(dirname "$0")/lib/portable.sh"
 source "$(dirname "$0")/lib/webhook-auth.sh"

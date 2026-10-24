@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, execSync } from "node:child_process";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 // These tests spawn the chat supervisor as a child process which starts an HTTP
 // server. Sandbox environments block child processes from binding ports.
@@ -357,7 +358,7 @@ describe("chat-supervisor end-to-end", { skip: !canChildListen() && "child proce
     await httpPost(port, "/dispatch", { content: "log-test", source: "test", priority: "high" });
     await sleep(500);
 
-    const logDir = path.join(os.homedir(), "dev/merlin/agent/logs/supervisor-test-chat");
+    const logDir = path.join(MERLIN_HOME, "agent/logs/supervisor-test-chat");
     // Events and cost logs should exist (or in the stateDir — let's check both).
     // The EventLog uses eventDir which is constructed from the agent name.
     const eventsPath = path.join(logDir, "events.ndjson");

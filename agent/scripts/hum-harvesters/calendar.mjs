@@ -4,11 +4,9 @@ import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
 import { readStdinJson, emit, emitNull, stampRun } from "./_common.mjs";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
-const HUM_STATE_FILE = path.join(
-  os.homedir(),
-  "dev/merlin/data/hum-state.json",
-);
+const HUM_STATE_FILE = path.join(MERLIN_HOME, "data/hum-state.json");
 
 /**
  * Return true if the two [start,end) intervals overlap by more than 1s.

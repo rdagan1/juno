@@ -21,9 +21,10 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const HOME = os.homedir();
-const JOB_COSTS = path.join(HOME, 'dev/merlin/agent/logs/supervisor-ops/job-costs.ndjson');
+const JOB_COSTS = path.join(MERLIN_HOME, 'agent/logs/supervisor-ops/job-costs.ndjson');
 
 // --- arg parsing ---
 const args = process.argv.slice(2);
@@ -180,7 +181,7 @@ if (PUSH) {
     .digest('hex').slice(0, 16);
 
   // Derive the repo root from this script's location (bin/), not a hardcoded
-  // ~/dev/merlin, so path casing/location differences don't bite.
+  // ~/Dev/merlin, so path casing/location differences don't bite.
   const MERLIN_ROOT = path.join(__dirname, '..');
   let ver = '';
   try { ver = require(path.join(MERLIN_ROOT, 'package.json')).version || ''; } catch { /* optional */ }

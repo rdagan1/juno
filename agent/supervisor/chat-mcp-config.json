@@ -3,12 +3,12 @@
   "mcpServers": {
     "phone-channel": {
       "command": "node",
-      "args": ["${MERLIN_HOME_USER}/dev/merlin/agent/phone-channel/index.mjs"],
+      "args": ["${MERLIN_HOME}/agent/phone-channel/index.mjs"],
       "alwaysLoad": true
     },
     "tools": {
       "command": "node",
-      "args": ["${MERLIN_HOME_USER}/dev/merlin/agent/tools-mcp/index.mjs"],
+      "args": ["${MERLIN_HOME}/agent/tools-mcp/index.mjs"],
       "alwaysLoad": true
     },
     "supabase-merlin": {

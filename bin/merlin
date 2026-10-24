@@ -10,10 +10,10 @@ const os = require('os');
 // --- Paths ---
 const HOME = os.homedir();
 // MERLIN_HOME resolves the user's clone of the repo. Set explicitly via env;
-// otherwise default to $HOME/Dev/merlin (the canonical convention). Tools
+// otherwise it's the checkout this script lives in. Tools
 // outside this repo (CI, cron) should always export MERLIN_HOME — the env
 // var also propagates to every child process the supervisor spawns.
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(HOME, 'Dev/merlin');
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(__dirname, '..');
 const ROOT = MERLIN_HOME;
 // Backwards compat: TOOLS used to be a separate dir wrapper. The layout drop
 // in Phase 2 means TOOLS now equals ROOT — keep the constant so the rest of
@@ -153,6 +153,7 @@ function cmdHelp() {
   console.log(c.bold('STATE'));
   console.log('  logs <component> [--tail N]   tail log file');
   console.log('  cron                          crontab with descriptions from tasks.json');
+  console.log('  cron install|uninstall [--dry-run]  write/remove the tasks.json-driven crontab block');
   console.log('  git                           branch + status + recent commits');
   console.log('  ci [--limit N]                GitHub Actions runs\n');
   console.log(c.bold('CONTROL'));
@@ -274,7 +275,10 @@ function matchTask(phrase) {
     }
     if (best) matches.push({ task: t, matched_phrase: best });
   }
-  return matches;
+  // A phrase equal to the whole query beats substring hits ("hum weekly
+  // review" is hum-review, not also hum via the bare "hum" phrase).
+  const exact = matches.filter(m => m.matched_phrase.toLowerCase() === phrase.toLowerCase().trim());
+  return exact.length ? exact : matches;
 }
 
 function cmdTasksMatch(args) {
@@ -560,8 +564,12 @@ function cmdLogs(args) {
   if (!name) die('logs: missing <component>. Available: chat-agent, ops-agent, hookdeck, wiki-server, watchdog, heartbeat, triage, claude-launchagent');
   const tail = Number(getFlag(args, '--tail', '50'));
   const candidates = {
-    'chat-agent': path.join(AGENT_LOGS, 'chat-agent.log'),
-    'ops-agent': path.join(AGENT_LOGS, 'ops-agent.log'),
+    'chat-agent': path.join(AGENT_LOGS, 'chat-supervisor.log'),
+    'ops-agent': path.join(AGENT_LOGS, 'ops-supervisor.log'),
+    'chat': path.join(AGENT_LOGS, 'chat-supervisor.log'),
+    'ops': path.join(AGENT_LOGS, 'ops-supervisor.log'),
+    'outbound': path.join(AGENT_LOGS, 'outbound.log'),
+    'cron': path.join(AGENT_LOGS, 'cron.log'),
     'hookdeck': path.join(AGENT_LOGS, 'hookdeck.log'),
     'wiki-server': path.join(AGENT_LOGS, 'wiki-server.log'),
     'watchdog': path.join(AGENT_LOGS, 'watchdog.log'),
@@ -582,9 +590,61 @@ function cmdLogs(args) {
 }
 
 // --- cron ---
+// Managed block written by `merlin cron install`. Everything between the
+// markers is regenerated from system/tasks.json; lines outside are untouched.
+const CRON_BEGIN = '# >>> merlin (managed by `merlin cron install` — edit system/tasks.json, not this block) >>>';
+const CRON_END = '# <<< merlin <<<';
+
+function stripCronBlock(text) {
+  const out = []; let inBlock = false;
+  for (const line of text.split('\n')) {
+    if (line === CRON_BEGIN) { inBlock = true; continue; }
+    if (line === CRON_END) { inBlock = false; continue; }
+    if (!inBlock) out.push(line);
+  }
+  return out.join('\n').replace(/\n+$/, '');
+}
+
+function cronBlock() {
+  const logs = path.join(ROOT, 'agent/logs/cron.log');
+  const run = (script) => `${path.join(ROOT, script)} >> ${logs} 2>&1`;
+  const lines = [
+    CRON_BEGIN,
+    `MERLIN_HOME=${ROOT}`,
+    // cron's default PATH is /usr/bin:/bin; node may live elsewhere (nvm, /opt).
+    `PATH=${[path.dirname(process.execPath), path.join(HOME, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin'].join(':')}`,
+  ];
+  for (const t of loadTasks()) {
+    if (!t.schedule || t.schedule === 'on-demand' || !t.trigger_script) continue;
+    for (const sched of t.schedule.split(/\s+\/\s+/).map(x => x.trim()).filter(Boolean)) {
+      lines.push(`${sched} ${run(t.trigger_script)}  # ${t.name}`);
+    }
+  }
+  // Infrastructure jobs that aren't tasks.json entries.
+  lines.push(`*/5 * * * * ${run('agent/scripts/watchdog.sh')}  # watchdog`);
+  lines.push(`0 3 * * * ${run('agent/scripts/rotate-agent-logs.sh')}  # log rotation`);
+  if (fs.existsSync(path.join(ROOT, 'credentials/gmail-push-token.json'))) {
+    lines.push(`0 6 * * * ${run('agent/scripts/renew-gmail-watch.sh')}  # Gmail watch renewal`);
+  }
+  lines.push(CRON_END);
+  return lines.join('\n');
+}
+
 function cmdCron(args) {
+  const sub = args[0];
+  if (sub === 'install' || sub === 'uninstall') {
+    const current = shSafe('crontab -l 2>/dev/null') || '';
+    const kept = stripCronBlock(current);
+    const next = (sub === 'install' ? [kept, cronBlock()] : [kept]).filter(Boolean).join('\n\n') + '\n';
+    if (hasFlag(args, '--dry-run')) { process.stdout.write(next); return; }
+    if (!shSafe('command -v crontab')) die('crontab not found — install cron (Debian/Ubuntu: apt install cron)');
+    const r = spawnSync('crontab', ['-'], { input: next, encoding: 'utf8' });
+    if (r.status !== 0) die(`crontab write failed: ${(r.stderr || '').trim()}`);
+    console.log(c.green(sub === 'install' ? '✓ merlin cron block installed — check: merlin doctor' : '✓ merlin cron block removed'));
+    return;
+  }
   const cron = shSafe('crontab -l') || '';
-  const lines = cron.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+  const lines = cron.split('\n').filter(l => l.trim() && !l.startsWith('#') && !/^[A-Z_]+=/.test(l));
   const tasks = loadTasks();
   const rows = lines.map(line => {
     const m = line.match(/^([\d*,/\- ]+) (.+)$/);
@@ -731,9 +791,13 @@ function cmdTriageStatus(args) {
 }
 
 function cmdTriageStats(args) {
-  if (!fs.existsSync(TRIAGE_LOG)) die('triage.log not found');
-  const today = new Date().toISOString().slice(0, 10);
   const since = getFlag(args, '--since'); // e.g. "24h" or "3h"
+  if (!fs.existsSync(TRIAGE_LOG)) {
+    if (hasFlag(args, '--json')) console.log(JSON.stringify({ window: since || 'today', total: 0, counts: {} }, null, 2));
+    else console.log(c.dim('no triage events yet (logs/triage.log appears after the first email is triaged)'));
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
   const useToday = hasFlag(args, '--today') || !since;
   let cutoff = null;
   if (since) {
@@ -763,7 +827,7 @@ function cmdTriageStats(args) {
 }
 
 function cmdTriageRecent(args) {
-  if (!fs.existsSync(TRIAGE_LOG)) die('triage.log not found');
+  if (!fs.existsSync(TRIAGE_LOG)) { console.log(hasFlag(args, '--json') ? '[]' : c.dim('no triage events yet')); return; }
   const n = Number(args.find(a => !a.startsWith('--')) || 20);
   const lines = fs.readFileSync(TRIAGE_LOG, 'utf8').trim().split('\n').slice(-n);
   if (hasFlag(args, '--json')) {
@@ -785,7 +849,7 @@ function cmdTriageRecent(args) {
 }
 
 function cmdTriagePending(args) {
-  if (!fs.existsSync(TRIAGE_LOG)) die('triage.log not found');
+  if (!fs.existsSync(TRIAGE_LOG)) { console.log(hasFlag(args, '--json') ? '[]' : c.dim('(no drafts created in last 24h)')); return; }
   const cutoff = Date.now() - 24 * 3600 * 1000;
   const drafts = [];
   for (const line of fs.readFileSync(TRIAGE_LOG, 'utf8').trim().split('\n')) {
@@ -817,7 +881,7 @@ function cmdTriageRules() {
 }
 
 function cmdTriagePlaybook() {
-  if (!fs.existsSync(TRIAGE_PLAYBOOK)) die('email-triage-playbook.md not found at ' + TRIAGE_PLAYBOOK);
+  if (!fs.existsSync(TRIAGE_PLAYBOOK)) die(`email-triage-playbook.md not found at ${TRIAGE_PLAYBOOK} — run: merlin init (seeds it from examples/)`);
   process.stdout.write(fs.readFileSync(TRIAGE_PLAYBOOK, 'utf8'));
 }
 
@@ -935,7 +999,7 @@ function cmdWhere(args) {
   const hits = [];
   // tasks
   for (const t of loadTasks()) {
-    if (t.name.includes(ql) || t.webhook_task.toLowerCase().includes(ql) || t.phrases.some(p => p.includes(ql)))
+    if (t.name.includes(ql) || (t.webhook_task || '').toLowerCase().includes(ql) || t.phrases.some(p => p.includes(ql)))
       hits.push({ kind: 'task', name: t.name, location: t.trigger_script });
   }
   // services
@@ -965,7 +1029,7 @@ function cmdDoctor(args) {
   const cronLines = cron.split('\n').filter(l => l.trim() && !l.startsWith('#'));
   const missingScripts = [];
   for (const line of cronLines) {
-    const m = line.match(/(\/Users\/[^\s>]+\.(sh|mjs|js))/);
+    const m = line.match(/(\/[^\s>]+\.(sh|mjs|js))/);
     if (!m) continue;
     if (!fs.existsSync(m[1])) missingScripts.push(m[1]);
   }
@@ -1658,9 +1722,9 @@ function cmdCost(args) {
   console.log(`  entries: ${j.entries || 0}`);
 }
 
-const HUM_PENDING_Q = path.join(HOME, 'dev/merlin/data/hum-pending-question.json');
-const HUM_LEARNINGS = path.join(HOME, 'dev/merlin/data/hum-learnings.jsonl');
-const HUM_ANSWER_BIN = path.join(HOME, 'dev/merlin/bin/hum-answer');
+const HUM_PENDING_Q = path.join(MERLIN_HOME, 'data/hum-pending-question.json');
+const HUM_LEARNINGS = path.join(MERLIN_HOME, 'data/hum-learnings.jsonl');
+const HUM_ANSWER_BIN = path.join(MERLIN_HOME, 'bin/hum-answer');
 
 function cmdHumQuestion(args) {
   try {
@@ -1761,7 +1825,7 @@ function buildSituation() {
   // Today's git commits (topic extraction)
   let todayCommits = [];
   try {
-    const out = shSafe(`cd ${HOME}/dev/merlin && git log --oneline --since="today 00:00" --no-color 2>/dev/null`);
+    const out = shSafe(`cd "${MERLIN_HOME}" && git log --oneline --since="today 00:00" --no-color 2>/dev/null`);
     todayCommits = (out || '').trim().split('\n').filter(Boolean).slice(0, 20);
   } catch {}
 
@@ -1769,7 +1833,7 @@ function buildSituation() {
   // subject lines (minus prefixes like "feat:"/"fix:" and small words). Top 5.
   let weekTopics = [];
   try {
-    const raw = shSafe(`cd ${HOME}/dev/merlin && git log --since="7 days ago" --pretty=%s --no-color 2>/dev/null`) || '';
+    const raw = shSafe(`cd "${MERLIN_HOME}" && git log --since="7 days ago" --pretty=%s --no-color 2>/dev/null`) || '';
     const stop = new Set(['the','and','for','with','from','into','that','this','add','adds','added','fix','fixes','fixed','update','updates','updated','feat','chore','docs','test','tests','when','what','have','has','not','now','new','use','uses','used','one','two','all','any','via','per']);
     const freq = {};
     for (const line of raw.split('\n')) {
@@ -1782,10 +1846,10 @@ function buildSituation() {
     weekTopics = Object.entries(freq).sort((a,b) => b[1]-a[1]).slice(0, 5).map(([w]) => w);
   } catch {}
 
-  // Weather, cached via apple-weather — skip if binary missing
+  // Weather via bin/weather-now (apple-weather or Open-Meteo) — null if unconfigured
   let weather = null;
   try {
-    const w = shSafe(`"${path.join(TOOLS, 'bin/apple-weather')}" --findme --json 2>/dev/null`);
+    const w = shSafe(`"${path.join(TOOLS, 'bin/weather-now')}" --json 2>/dev/null`);
     if (w) {
       const parsed = JSON.parse(w);
       const cur = parsed?.currentWeather || parsed?.current || null;
@@ -2284,6 +2348,7 @@ function cmdInit(args) {
       ['examples/hum-interests.example.json', 'data/hum-interests.json'],
       ['examples/hum-intent.example.md',      'data/hum-intent.md'],
       ['examples/user-timezone.example.json', 'data/user-timezone.json'],
+      ['examples/email-triage-playbook.example.md', 'data/email-triage-playbook.md'],
     ];
     const seeded = [];
     for (const [src, dst] of seedMap) {

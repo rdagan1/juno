@@ -6,7 +6,7 @@
 # Exit 0 = all green. Exit 1 = a test failed.
 
 set -u
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 G="${MERLIN_HOME}/bin/merlin"
 PASS=0
@@ -46,14 +46,15 @@ echo
 echo "[tasks]"
 run "tasks list" "$G" tasks
 run "tasks list --json" "$G" tasks --json
-assert_json "tasks.json has 6 entries" '. | length' '6' "$G" tasks
+TASK_COUNT=$(jq '.tasks | length' "${MERLIN_HOME}/system/tasks.json")
+assert_json "tasks --json lists every tasks.json entry ($TASK_COUNT)" '. | length' "$TASK_COUNT" "$G" tasks
 run "tasks show morning-digest" "$G" tasks show morning-digest
 EXPECT_CODE=1 run "tasks show unknown exits 1" "$G" tasks show nonexistent
 
 # Matching
 assert_json "match 'morning briefing' → morning-digest" '.matches[0].name' 'morning-digest' "$G" tasks match "morning briefing"
-assert_json "match 'weekend activity list' → weekend-events" '.matches[0].name' 'weekend-events' "$G" tasks match "weekend activity list"
-assert_json "match 'send the newsletters' → newsletter-digest" '.matches[0].name' 'newsletter-digest' "$G" tasks match "send the newsletters"
+assert_json "match 'rebalance pins' → wiki-audit" '.matches[0].name' 'wiki-audit' "$G" tasks match "rebalance pins"
+assert_json "match 'hum weekly review' → hum-review" '.matches[0].name' 'hum-review' "$G" tasks match "hum weekly review"
 assert_json "match confidence is high when 1 match" '.confidence' 'high' "$G" tasks match "morning brief"
 assert_json "match gibberish → none" '.confidence' 'none' "$G" tasks match "bla bla bla bla"
 run "tasks match exit 0 for high-confidence" "$G" tasks match "morning brief"
@@ -135,7 +136,8 @@ run "doctor --json" "$G" doctor --json
 # doctor drift injection
 echo "  (drift injection test)"
 cp ${MERLIN_HOME}/system/tasks.json /tmp/_tasks_backup.json
-sed -i '' 's/"Morning Digest"/"Drift-Injected"/' ${MERLIN_HOME}/system/tasks.json
+# -i.bak works on both GNU and BSD sed (BSD needs a suffix arg, GNU forbids a separate one).
+sed -i.bak 's/"Morning Digest"/"Drift-Injected"/' ${MERLIN_HOME}/system/tasks.json && rm -f ${MERLIN_HOME}/system/tasks.json.bak
 if "$G" doctor > /dev/null 2>&1; then fail "drift detection catches bad playbook section"
 else pass "drift detection catches bad playbook section"; fi
 cp /tmp/_tasks_backup.json ${MERLIN_HOME}/system/tasks.json

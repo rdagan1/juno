@@ -8,12 +8,12 @@
 # browser-automation jobs. This script probes the CDP port and fires exactly
 # one Merlin ping on each UP→DOWN transition; DOWN→UP is silent (self-heal).
 #
-# Install via crontab: */15 * * * * ${MERLIN_HOME_USER}/dev/merlin/agent/scripts/chrome-cdp-watch.sh
+# Install via crontab: */15 * * * * ${MERLIN_HOME}/agent/scripts/chrome-cdp-watch.sh
 #
 # State: data/chrome-cdp-state.json {state, since, last_notified}
 # Log:   agent/logs/watchdog.log  (single source of truth for ops alerts)
 
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 source "$(dirname "$0")/lib/portable.sh"
 portable_path

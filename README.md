@@ -104,7 +104,7 @@ Merlin is deliberately a small, opinionated kernel — not a turnkey product. Th
 
 Minimum:
 
-- **macOS** (Apple Silicon preferred) or **Linux**
+- **macOS** (Apple Silicon preferred) or **Linux** (any 64-bit distro with systemd — `./scripts/install-systemd.sh` does the 24/7 setup)
 - **Node.js 22.5+** (built-in `node:sqlite`)
 - **[Ollama](https://ollama.com)** with `gemma3:4b` and `nomic-embed-text` pulled
 - A **Claude Max subscription** (recommended) OR a **Claude API key**

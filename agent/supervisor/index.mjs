@@ -24,10 +24,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn as spawnProc } from "node:child_process";
 import { ClaudeSession } from "./claude-session.mjs";
 
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 // Prefix every supervisor stderr line with an ISO timestamp. The supervisor
 // log used to have no per-line time, forcing cross-reference with

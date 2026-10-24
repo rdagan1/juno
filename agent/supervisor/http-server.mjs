@@ -11,11 +11,12 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 
 const MAX_BODY = 64 * 1024;
 const HOME = process.env.HOME;
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(HOME, "Dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const JOBS_DIR = path.join(MERLIN_HOME, "agent/ops-agent/jobs");
 // Personal-overlay drop. Jobs here are dispatchable identically to bundled
 // jobs; kernel jobs win on name conflicts. See docs/architecture-public-private.md.

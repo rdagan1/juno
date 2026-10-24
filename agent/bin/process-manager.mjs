@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // process-manager.mjs — direct process supervisor, replaces tmux session management.
 //
-// Manages 4 child processes with independent restart:
+// Manages up to 4 child processes with independent restart:
 //   1. Chat supervisor  (Node.js — manages Claude session for Merlin messages)
 //   2. Ops supervisor   (Node.js — manages Claude session for email triage + tasks)
-//   3. Hookdeck         (webhook relay for Gmail Pub/Sub)
+//   3. Hookdeck         (webhook relay for Gmail Pub/Sub; only if on PATH)
 //   4. Wiki server      (HTTP wiki browser at 127.0.0.1:9096)
 //
 // Each process restarts independently with exponential backoff.
@@ -12,12 +12,17 @@
 //
 // Managed by launchd (ai.claude.session).
 
-import { mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import http from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ManagedProcess } from "../lib/managed-process.mjs";
 
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+// Export it so every child (supervisors, claude, MCP servers via ${MERLIN_HOME}
+// in chat-mcp-config.json) resolves the same checkout.
+process.env.MERLIN_HOME = MERLIN_HOME;
 
 const HOME = process.env.HOME;
 const MERLIN = MERLIN_HOME;
@@ -29,26 +34,21 @@ const NODE = "node";
 // Load .env into process.env so secrets (SUPABASE_ACCESS_TOKEN, etc.)
 // propagate to every child process — supervisors, Claude, and MCP servers
 // that use ${VAR} substitution in .mcp.json. Does NOT override existing env vars.
-function loadDotEnv() {
-  const envPath = path.join(MERLIN, ".env");
-  try {
-    for (const line of readFileSync(envPath, "utf8").split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const m = trimmed.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/);
-      if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-    }
-  } catch (err) {
-    process.stderr.write(`[process-manager] warn: could not load ${envPath}: ${err.message}\n`);
-  }
-}
-loadDotEnv();
+const envPath = path.join(MERLIN, ".env");
+if (!existsSync(envPath)) process.stderr.write(`[process-manager] warn: no ${envPath} — run: merlin init\n`);
+createRequire(import.meta.url)("../../lib/load-env.js").loadEnv(envPath);
 
 mkdirSync(LOG_DIR, { recursive: true });
 
 function log(msg) {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
   process.stderr.write(`${ts} ${msg}\n`);
+}
+
+function onPath(cmd) {
+  return (process.env.PATH || "").split(path.delimiter).some((dir) => {
+    try { accessSync(path.join(dir, cmd), constants.X_OK); return true; } catch { return false; }
+  });
 }
 
 function createProcesses() {
@@ -84,7 +84,12 @@ function createProcesses() {
   // reach the grandchild. That left orphaned hookdeck listeners from
   // prior manager restarts still connected to the Hookdeck cloud and
   // load-balancing Gmail pushes onto dead tunnels (observed 2026-04-16).
-  children.push(
+  // Optional: only Gmail push needs it. Without the binary it would crash-loop
+  // on spawn ENOENT forever, so leave it out (re-checked on every
+  // process-manager start).
+  if (!onPath("hookdeck")) {
+    log("hookdeck not on PATH — skipping Gmail push relay (see docs/integrations/gmail.md)");
+  } else children.push(
     new ManagedProcess({
       name: "hookdeck",
       command: "hookdeck",

@@ -2,7 +2,7 @@
 # cron runs with PATH=/usr/bin:/bin; tools like gmail-action need node via
 # homebrew / ~/.local/bin. Set PATH explicitly so checks don't silently no-op (the Gmail
 # unread sweep was dead from Apr 10 2026 until this was added).
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 source "$(dirname "$0")/lib/portable.sh"
 portable_path

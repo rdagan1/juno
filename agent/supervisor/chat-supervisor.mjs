@@ -17,11 +17,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import http from "node:http";
 import { ClaudeSession } from "./claude-session.mjs";
 import { PriorityDispatcher } from "../lib/priority-dispatcher.mjs";
 
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 // Prefix every supervisor stderr line with an ISO timestamp; see matching
 // block in ops index.mjs for rationale.
@@ -399,7 +400,7 @@ class ChatSupervisor {
       console.error(`[chat-supervisor] safety net: SUPABASE_SERVICE_ROLE_KEY not available — orphaned text lost: ${message.slice(0, 80)}`);
       return;
     }
-    const SUPABASE_URL = "https://${MERLIN_SUPABASE_PROJECT}.supabase.co";
+    const SUPABASE_URL = (process.env.SUPABASE_URL || `https://${process.env.MERLIN_SUPABASE_PROJECT}.supabase.co`);
     const res = await fetch(`${SUPABASE_URL}/rest/v1/merlin_messages`, {
       method: "POST",
       headers: {

@@ -25,6 +25,7 @@ import path from "node:path";
 
 import { appendReaction } from "../lib/suggestion-history.mjs";
 import { localLlmChat } from "../lib/local-llm.mjs";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const args = process.argv.slice(2);
 function flag(name, hasValue = true) {
@@ -57,7 +58,7 @@ text = text.trim();
 //    Returns null if no recent advisory ping exists — most user messages are
 //    fresh commands, not reactions.
 // ---------------------------------------------------------------------------
-const HUM_FEEDBACK_PATH = path.join(os.homedir(), "dev/merlin/data/hum-feedback.jsonl");
+const HUM_FEEDBACK_PATH = path.join(MERLIN_HOME, "data/hum-feedback.jsonl");
 const ADVISORY_LANES = new Set(["dining", "music", "art", "talks", "ideas", "watchlist", "concerts", "village", "broadway", "location_context"]);
 const REACTION_WINDOW_MS = 6 * 60 * 60 * 1000;
 

@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # install-systemd.sh — install Merlin as a systemd --user service (Linux).
 #
-# Renders system/systemd/merlin.service into ~/.config/systemd/user/, enables
-# lingering so it runs without an open login session, and starts it. Idempotent:
-# re-run after moving the checkout or changing Node.
+# Renders the units in system/systemd/ (merlin.service + the heartbeat timer)
+# into ~/.config/systemd/user/, enables lingering so they run without an open
+# login session, starts them, and installs the tasks.json crontab block
+# (`merlin cron install`). Idempotent: re-run after moving the checkout or
+# changing Node.
 #
 #   ./scripts/install-systemd.sh              # install + enable + start
 #   ./scripts/install-systemd.sh --no-start   # install + enable only
-#   ./scripts/install-systemd.sh --uninstall  # stop, disable, remove the unit
+#   ./scripts/install-systemd.sh --uninstall  # stop, disable, remove units + cron block
 
 set -euo pipefail
 
 MERLIN_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT=merlin.service
+UNITS=(merlin.service merlin-heartbeat.service merlin-heartbeat.timer)
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-TEMPLATE="$MERLIN_HOME/system/systemd/$UNIT"
+TEMPLATE_DIR="$MERLIN_HOME/system/systemd"
 
 die() { echo "✘ $*" >&2; exit 1; }
 ok()  { echo "✓ $*"; }
@@ -25,10 +28,11 @@ systemctl --user show-environment >/dev/null 2>&1 \
   || die "no systemd user manager reachable. Log in via a real session (ssh, not su/sudo) or set XDG_RUNTIME_DIR=/run/user/$(id -u)."
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  systemctl --user disable --now "$UNIT" 2>/dev/null || true
-  rm -f "$UNIT_DIR/$UNIT"
+  systemctl --user disable --now "$UNIT" merlin-heartbeat.timer 2>/dev/null || true
+  for u in "${UNITS[@]}"; do rm -f "$UNIT_DIR/$u"; done
   systemctl --user daemon-reload
-  ok "removed $UNIT (checkout at $MERLIN_HOME untouched)"
+  command -v crontab >/dev/null 2>&1 && "$MERLIN_HOME/bin/merlin" cron uninstall
+  ok "removed ${UNITS[*]} (checkout at $MERLIN_HOME untouched)"
   exit 0
 fi
 
@@ -41,11 +45,13 @@ command -v claude >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/claude" ]] \
 SVC_PATH="$(dirname "$NODE"):$HOME/.local/bin:$MERLIN_HOME/bin:/usr/local/bin:/usr/bin:/bin"
 
 mkdir -p "$UNIT_DIR" "$MERLIN_HOME/agent/logs"
-sed -e "s|@MERLIN_HOME@|$MERLIN_HOME|g" \
-    -e "s|@NODE@|$NODE|g" \
-    -e "s|@PATH@|$SVC_PATH|g" \
-    "$TEMPLATE" > "$UNIT_DIR/$UNIT"
-ok "wrote $UNIT_DIR/$UNIT"
+for u in "${UNITS[@]}"; do
+  sed -e "s|@MERLIN_HOME@|$MERLIN_HOME|g" \
+      -e "s|@NODE@|$NODE|g" \
+      -e "s|@PATH@|$SVC_PATH|g" \
+      "$TEMPLATE_DIR/$u" > "$UNIT_DIR/$u"
+done
+ok "wrote ${UNITS[*]} to $UNIT_DIR"
 
 if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != "yes" ]]; then
   if loginctl enable-linger "$(id -un)" 2>/dev/null; then
@@ -57,10 +63,18 @@ if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != "yes"
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable "$UNIT" >/dev/null
-ok "enabled $UNIT"
+systemctl --user enable "$UNIT" merlin-heartbeat.timer >/dev/null
+ok "enabled $UNIT + merlin-heartbeat.timer"
 
 if [[ "${1:-}" != "--no-start" ]]; then
   systemctl --user restart "$UNIT"
+  systemctl --user start merlin-heartbeat.timer
   ok "started $UNIT — check with: systemctl --user status $UNIT  (or: ./bin/merlin status)"
+fi
+
+# Scheduled jobs (system/tasks.json) + watchdog + log rotation run from cron.
+if command -v crontab >/dev/null 2>&1; then
+  "$MERLIN_HOME/bin/merlin" cron install
+else
+  echo "! cron not installed — scheduled jobs won't run. Install it (Debian/Ubuntu: sudo apt install cron), then: ./bin/merlin cron install"
 fi

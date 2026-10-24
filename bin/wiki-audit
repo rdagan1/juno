@@ -25,6 +25,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const ws = require("../lib/wiki-store.js");
+require("../lib/load-env.js").loadEnv();
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const args = process.argv.slice(2);
 function flag(name, def = undefined) {
@@ -41,7 +43,7 @@ const AS_JSON = Boolean(flag("json", false));
 const WINDOW_DAYS = Number(flag("window-days", 7));
 const PIN_THRESHOLD = Number(flag("pin-threshold", 5));
 const TENURE_DAYS = Number(flag("tenure-days", 7));
-const EMAIL_TO = String(flag("email-to", "${MERLIN_OWNER_EMAIL}"));
+const EMAIL_TO = String(flag("email-to", process.env.MERLIN_OWNER_EMAIL || ""));
 
 const sinceMs = Date.now() - WINDOW_DAYS * 24 * 3600 * 1000;
 
@@ -192,7 +194,7 @@ function sendEmail(report) {
   const ymd = new Date().toISOString().slice(0, 10);
   const subj = `Wiki pin audit — ${report.pin_now.length}↑ ${report.unpin_now.length}↓ (${ymd})`;
   const r = spawnSync(
-    path.join(os.homedir(), "dev/merlin/bin/email-send"),
+    path.join(MERLIN_HOME, "bin/email-send"),
     ["--to", EMAIL_TO, "--subject", subj, "--body-file", tmp, "--html"],
     { stdio: "inherit" },
   );

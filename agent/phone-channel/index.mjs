@@ -12,11 +12,12 @@ import path from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { loadEnv } = require("../../lib/load-env.js");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
-const SUPABASE_URL = "https://${MERLIN_SUPABASE_PROJECT}.supabase.co";
-
-// Load .env first — service_role key must come from env, not source code.
+// Load .env first — the project URL and service_role key come from env, not source code.
 loadEnv();
+
+const SUPABASE_URL = (process.env.SUPABASE_URL || `https://${process.env.MERLIN_SUPABASE_PROJECT}.supabase.co`);
 
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!SUPABASE_KEY) {
@@ -26,7 +27,7 @@ if (!SUPABASE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // --- Persistent cursor for sweep ---
-const CURSOR_PATH = path.join(process.env.HOME, "dev/merlin/data/phone-channel-cursor.json");
+const CURSOR_PATH = path.join(MERLIN_HOME, "data/phone-channel-cursor.json");
 const CURSOR_FALLBACK_MS = 30 * 60 * 1000;
 
 function loadCursor() {
@@ -52,7 +53,7 @@ let _cachedUserTz = null; // skip redundant timezone writes when unchanged
 
 // Instance ID for tracing which phone-channel process handles what
 const INSTANCE_ID = `pc-${process.pid}`;
-const ACK_LOG = process.env.HOME + "/dev/merlin/agent/logs/ack-trace.log";
+const ACK_LOG = path.join(MERLIN_HOME, "agent/logs/ack-trace.log");
 const log = (msg) => {
   const line = `${new Date().toISOString()} [${INSTANCE_ID}] ${msg}\n`;
   console.error(line.trim());
@@ -460,7 +461,7 @@ async function handleIncomingMessage(row) {
   if (tz && tz !== "unknown" && tz !== _cachedUserTz) {
     _cachedUserTz = tz;
     try {
-      const tzPath = path.join(process.env.HOME, "dev/merlin/data/user-timezone.json");
+      const tzPath = path.join(MERLIN_HOME, "data/user-timezone.json");
       const tmp = tzPath + ".tmp." + process.pid;
       fs.writeFileSync(tmp, JSON.stringify({ timezone: tz, utc_offset: utcOffset, updated_at: new Date().toISOString() }));
       fs.renameSync(tmp, tzPath);
@@ -685,8 +686,8 @@ const REACTION_EMOJI = {
 // Hum feedback log path — we resolve tapback reactions back to the ping_id by
 // scanning this file for a matching `message_id` (captured at ping-send time
 // via `merlin-send-curl --capture-id`, see jobs/hum.md step 3).
-const HUM_FEEDBACK_PATH = path.join(process.env.HOME, "dev/merlin/data/hum-feedback.jsonl");
-const HUM_CLI = path.join(process.env.HOME, "dev/merlin/bin/merlin");
+const HUM_FEEDBACK_PATH = path.join(MERLIN_HOME, "data/hum-feedback.jsonl");
+const HUM_CLI = path.join(MERLIN_HOME, "bin/merlin");
 
 /// Look up the hum ping_id for a reacted-to merlin_messages.id. Returns null
 /// if the message isn't a hum ping (or the ping pre-dates message_id capture).
@@ -732,7 +733,7 @@ function recordHumReaction(pingId, reactionToken) {
 // user message; it self-decides whether the message is a reaction to the
 // most-recent advisory hum ping. Latency-bounded by its own internal
 // timeouts (rules are sync, Gemma fallback is 4s) so it never blocks here.
-const SUGGESTION_CLASSIFY = path.join(process.env.HOME, "dev/merlin/bin/suggestion-classify");
+const SUGGESTION_CLASSIFY = path.join(MERLIN_HOME, "bin/suggestion-classify");
 
 function classifySuggestionReply(messageId, text) {
   import("node:child_process").then(({ spawn }) => {
@@ -920,9 +921,9 @@ function subscribeToLocationEdges() {
 // memory, calendar, conversation, habits, weather) whether to ask, what to
 // ask, or stay silent. Phone-channel does NOT craft questions itself.
 const OPS_WEBHOOK_URL = "http://localhost:9092";
-const OPS_WEBHOOK_TOKEN_PATH = process.env.HOME + "/dev/merlin/secrets/webhook-token";
-const LOCATION_EDGE_SEEN = process.env.HOME + "/dev/merlin/data/location-edge-seen.json";
-const HUM_PENDING = process.env.HOME + "/dev/merlin/data/hum-pending-question.json";
+const OPS_WEBHOOK_TOKEN_PATH = path.join(MERLIN_HOME, "secrets/webhook-token");
+const LOCATION_EDGE_SEEN = path.join(MERLIN_HOME, "data/location-edge-seen.json");
+const HUM_PENDING = path.join(MERLIN_HOME, "data/hum-pending-question.json");
 
 let _opsWebhookToken = null;
 function opsWebhookToken() {

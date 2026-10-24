@@ -1,0 +1,164 @@
+#!/usr/bin/env node
+// merlin-send-curl — send one agent-originated message to the user's phone.
+//
+//   merlin-send-curl [flags] "<message>"
+//   echo "<message>" | merlin-send-curl --message-from-stdin [flags]
+//
+// The single chokepoint every programmatic phone message goes through
+// (watchdog/supervisor alerts, hum pings, digest pointers, ops-agent
+// notifications). See agent/CLAUDE.md § Outbound Precheck.
+//
+//   1. Outbound precheck: unless --skip-precheck, pipe the message to
+//      bin/outbound-precheck.mjs (if installed). It prints
+//      {"decision":"send"|"suppress"|"modify","message"?,"reason"?}.
+//      Any precheck error fails OPEN (send the original), by design.
+//   2. Insert into Supabase `merlin_messages` (role=assistant, read=false) —
+//      the companion app's chat feed.
+//   3. APNs push to registered devices unless --no-push.
+//   4. If Supabase isn't configured or the insert fails: fall back to
+//      bin/email-send to MERLIN_OWNER_EMAIL (never a Gmail draft).
+// Every attempt is appended to agent/logs/outbound.log.
+//
+// Flags:
+//   --skip-precheck         bypass step 1 (liveness alerts only — see CLAUDE.md)
+//   --intent <topic>        sender hint for the precheck reasoner + log
+//   --channel <name>        logical channel tag (e.g. "system"), logged + passed to precheck
+//   --no-push               insert the chat row without an APNs push
+//   --push-body <text>      APNs body override (default: first 100 chars)
+//   --capture-id <file>     write the inserted message id to <file>, or
+//                           {"suppressed":true,"reason":...} when the precheck suppressed it
+//   --message-from-stdin    read the message body from stdin
+//   --suppress-hook         accepted for compatibility; no post-send hook ships
+//
+// Exit: 0 delivered (or suppressed by precheck), 1 usage, 2 no channel delivered it.
+//
+// The name is historical (it began as a curl one-liner); callers depend on it.
+
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const __dir = path.dirname(fileURLToPath(import.meta.url));
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(__dir, "..");
+require("../lib/load-env.js").loadEnv(path.join(MERLIN_HOME, ".env"));
+
+const OUTBOUND_LOG = path.join(MERLIN_HOME, "agent/logs/outbound.log");
+const PRECHECK_BIN = path.join(__dir, "outbound-precheck.mjs");
+const EMAIL_SEND_BIN = path.join(__dir, "email-send");
+
+function usage(msg) {
+  if (msg) process.stderr.write(`merlin-send-curl: ${msg}\n`);
+  process.stderr.write('usage: merlin-send-curl [--skip-precheck] [--intent X] [--channel X] [--no-push] [--push-body X] [--capture-id FILE] [--message-from-stdin] "<message>"\n');
+  process.exit(1);
+}
+
+const opts = { precheck: true, push: true, intent: null, channel: null, pushBody: null, captureFile: null, stdin: false };
+const positional = [];
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  const val = () => { if (i + 1 >= argv.length) usage(`${a} needs a value`); return argv[++i]; };
+  switch (a) {
+    case "--skip-precheck": opts.precheck = false; break;
+    case "--no-push": opts.push = false; break;
+    case "--suppress-hook": break;
+    case "--message-from-stdin": opts.stdin = true; break;
+    case "--intent": opts.intent = val(); break;
+    case "--channel": opts.channel = val(); break;
+    case "--push-body": opts.pushBody = val(); break;
+    case "--capture-id": opts.captureFile = val(); break;
+    case "-h": case "--help": usage();
+    default:
+      if (a.startsWith("--")) usage(`unknown flag ${a}`);
+      positional.push(a);
+  }
+}
+
+let message = opts.stdin ? fs.readFileSync(0, "utf8") : positional.join(" ");
+message = message.trim();
+if (!message) usage("empty message");
+
+function logLine(fields) {
+  try {
+    fs.mkdirSync(path.dirname(OUTBOUND_LOG), { recursive: true });
+    fs.appendFileSync(OUTBOUND_LOG, JSON.stringify({ ts: new Date().toISOString(), intent: opts.intent, channel: opts.channel, ...fields }) + "\n");
+  } catch {}
+}
+
+function capture(value) {
+  if (!opts.captureFile) return;
+  try { fs.writeFileSync(opts.captureFile, value); } catch (e) { process.stderr.write(`merlin-send-curl: capture-id write failed: ${e.message}\n`); }
+}
+
+// ── 1. outbound precheck (fail-open) ──────────────────────────────────────
+if (opts.precheck && fs.existsSync(PRECHECK_BIN)) {
+  const args = [PRECHECK_BIN];
+  if (opts.intent) args.push("--intent", opts.intent);
+  if (opts.channel) args.push("--channel", opts.channel);
+  const r = spawnSync(process.execPath, args, { input: message, encoding: "utf8", timeout: 60_000 });
+  let verdict = null;
+  try { verdict = JSON.parse((r.stdout || "").trim().split("\n").pop()); } catch {}
+  if (r.status !== 0 || !verdict) {
+    logLine({ precheck: "error-fail-open", detail: (r.stderr || r.error?.message || "").slice(0, 200) });
+  } else if (verdict.decision === "suppress") {
+    logLine({ precheck: "suppress", reason: verdict.reason || "", message });
+    capture(JSON.stringify({ suppressed: true, reason: verdict.reason || "" }));
+    process.exit(0);
+  } else if (verdict.decision === "modify" && typeof verdict.message === "string" && verdict.message.trim()) {
+    logLine({ precheck: "modify", original: message });
+    message = verdict.message.trim();
+  }
+}
+
+// ── 2/3. Supabase chat row + APNs push ────────────────────────────────────
+async function sendViaSupabase() {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL || (process.env.MERLIN_SUPABASE_PROJECT && `https://${process.env.MERLIN_SUPABASE_PROJECT}.supabase.co`);
+  if (!key || !url) return { ok: false, reason: "supabase not configured (SUPABASE_SERVICE_ROLE_KEY + SUPABASE_URL / MERLIN_SUPABASE_PROJECT)" };
+  const { createClient } = require("@supabase/supabase-js");
+  const supabase = createClient(url, key, { auth: { persistSession: false } });
+  const { data, error } = await supabase
+    .from("merlin_messages")
+    .insert({ role: "assistant", content: message, read: false })
+    .select("id")
+    .single();
+  if (error) return { ok: false, reason: `supabase insert: ${error.message}` };
+  if (opts.push) {
+    try {
+      const { sendApnsPush } = await import("../lib/apns-push.mjs");
+      const body = opts.pushBody || (message.length > 100 ? message.slice(0, 100) + "…" : message);
+      await sendApnsPush(supabase, { body, messageId: data.id });
+    } catch (e) {
+      process.stderr.write(`merlin-send-curl: push failed (row still inserted): ${e.message}\n`);
+    }
+  }
+  return { ok: true, id: data.id };
+}
+
+// ── 4. email fallback ─────────────────────────────────────────────────────
+function sendViaEmail(why) {
+  const to = process.env.MERLIN_OWNER_EMAIL;
+  if (!to || !fs.existsSync(EMAIL_SEND_BIN)) return { ok: false, reason: "email fallback unavailable (MERLIN_OWNER_EMAIL / bin/email-send)" };
+  const subject = `Merlin${opts.channel === "system" ? " system alert" : ""}: ${message.split("\n")[0].slice(0, 80)}`;
+  const r = spawnSync(EMAIL_SEND_BIN, ["--to", to, "--subject", subject, "--body", `${message}\n\n(sent by email because the phone channel is unavailable: ${why})`], { encoding: "utf8", timeout: 60_000 });
+  if (r.status !== 0) return { ok: false, reason: `email-send exit ${r.status}: ${(r.stderr || "").slice(0, 200)}` };
+  return { ok: true };
+}
+
+const phone = await sendViaSupabase().catch((e) => ({ ok: false, reason: e.message }));
+if (phone.ok) {
+  capture(String(phone.id));
+  logLine({ via: "phone", id: phone.id, message });
+  process.exit(0);
+}
+const mail = sendViaEmail(phone.reason);
+if (mail.ok) {
+  logLine({ via: "email", phone_error: phone.reason, message });
+  process.exit(0);
+}
+logLine({ via: "none", phone_error: phone.reason, email_error: mail.reason, message });
+process.stderr.write(`merlin-send-curl: not delivered — ${phone.reason}; ${mail.reason}\n`);
+process.exit(2);

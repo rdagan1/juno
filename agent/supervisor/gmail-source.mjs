@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 // Intake-side spam-filter fast-path (added 2026-05-18). Before dispatching
@@ -17,7 +18,7 @@ import { spawnSync } from "node:child_process";
 // Step 0b rule already covered this case, but the LLM-side check was not
 // firing reliably (5 distinct blocked senders bypassed intake on 2026-05-18 alone).
 // Hardwiring it here removes the dependency on agent recall.
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SPAM_FILTER_BIN = path.join(MERLIN_HOME, "bin/spam-filter");
 const GMAIL_ACTION_BIN = path.join(MERLIN_HOME, "bin/gmail-action");
 // Intake-skip rules — sender/subject patterns whose triage outcome is

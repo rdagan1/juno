@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const [ideaId, pingId] = process.argv.slice(2);
 if (!ideaId || !pingId) {
@@ -14,7 +15,7 @@ if (!ideaId || !pingId) {
   process.exit(2);
 }
 
-const file = path.join(os.homedir(), "dev/merlin/data/hum-ideas.jsonl");
+const file = path.join(MERLIN_HOME, "data/hum-ideas.jsonl");
 const record = {
   id: ideaId,
   consumed: true,

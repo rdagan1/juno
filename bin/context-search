@@ -6,10 +6,10 @@
 //   context-search stats                      — show entry counts per source
 
 import { createRequire } from "node:module";
-const path = require("node:path");
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+import path from "node:path";
 
 const require = createRequire(import.meta.url);
+const MERLIN_HOME = process.env.MERLIN_HOME || path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const cm = require("../lib/context-memory");
 
 const args = process.argv.slice(2);

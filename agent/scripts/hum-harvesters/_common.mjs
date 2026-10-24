@@ -11,11 +11,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const HOME = os.homedir();
-const CACHE_DIR = path.join(HOME, "dev/merlin/data/hum-cache");
-const STATE_FILE = path.join(HOME, "dev/merlin/data/hum-interests-state.json");
-const RUNS_FILE = path.join(HOME, "dev/merlin/data/hum-runs.jsonl");
+const CACHE_DIR = path.join(MERLIN_HOME, "data/hum-cache");
+const STATE_FILE = path.join(MERLIN_HOME, "data/hum-interests-state.json");
+const RUNS_FILE = path.join(MERLIN_HOME, "data/hum-runs.jsonl");
 
 const SILENCE_LIMIT_PER_DAY = 3;
 

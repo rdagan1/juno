@@ -144,7 +144,7 @@ async function main() {
   // on stdin. See lib/merlin-context.js for fields.
   let contextJson = "{}";
   try {
-    const ctxBuilder = await import(path.join(HOME, "dev/merlin/lib/merlin-context.js"));
+    const ctxBuilder = await import(path.join(MERLIN_HOME, "lib/merlin-context.js"));
     const ctx = ctxBuilder.default.build ? ctxBuilder.default.build() : ctxBuilder.build();
     contextJson = JSON.stringify(ctx);
   } catch (e) {

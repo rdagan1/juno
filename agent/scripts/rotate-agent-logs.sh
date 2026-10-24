@@ -4,13 +4,13 @@
 # and launchd/systemd (StandardErrorPath / StandardError=append:) keep writing
 # to the same path without reopen.
 #
-# Cron: 0 3 * * * ${MERLIN_HOME_USER}/dev/merlin/agent/scripts/rotate-agent-logs.sh
+# Cron: 0 3 * * * ${MERLIN_HOME}/agent/scripts/rotate-agent-logs.sh
 #
 # Replaces the pre-process-manager tmux pipe-pane rotation (was rotating
 # chat-agent.log / ops-agent.log that no longer exist).
 
 set -u
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 source "$(dirname "$0")/lib/portable.sh"
 
 LOGDIR="${MERLIN_HOME}/agent/logs"

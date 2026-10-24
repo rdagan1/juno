@@ -23,11 +23,14 @@ import {
 import {
   LEDGER_FILE, mergeShortKeysToLong,
 } from "../lib/suggestion-history.mjs";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const HOME = os.homedir();
-const FEEDBACK = path.join(HOME, "dev/merlin/data/hum-feedback.jsonl");
-const STOPS = path.join(HOME, "dev/merlin/data/confirmed-stops.json");
-const MEMORY_DIR = path.join(HOME, ".claude/projects/-Users-mraccah-Dev-merlin/memory");
+const FEEDBACK = path.join(MERLIN_HOME, "data/hum-feedback.jsonl");
+const STOPS = path.join(MERLIN_HOME, "data/confirmed-stops.json");
+// Claude Code keys auto-memory by project path: /a/b/merlin → -a-b-merlin.
+const MEMORY_DIR = process.env.MEMORY_INDEX_DIR ||
+  path.join(HOME, ".claude/projects", "-" + MERLIN_HOME.replace(/^\//, "").replace(/\//g, "-"), "memory");
 
 const args = new Set(process.argv.slice(2));
 const DRY = args.has("--dry-run");

@@ -3,7 +3,7 @@
 # Provides CURL_AUTH array for use in curl calls: curl ... "${CURL_AUTH[@]}" ...
 # If the token file is missing, CURL_AUTH is empty and curl works without auth.
 
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 
 WEBHOOK_TOKEN_FILE="${MERLIN_HOME}/secrets/webhook-token"
 CURL_AUTH=()

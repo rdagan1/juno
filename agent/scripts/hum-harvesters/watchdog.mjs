@@ -4,9 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readStdinJson, emit, emitNull, stampRun } from "./_common.mjs";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const { situation: sit, context } = await readStdinJson(); void sit; void context;
-const LOG = path.join(os.homedir(), "dev/merlin/agent/logs/watchdog.log");
+const LOG = path.join(MERLIN_HOME, "agent/logs/watchdog.log");
 
 let issues = [];
 try {

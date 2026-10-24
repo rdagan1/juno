@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { execSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readStdinJson, readCache, writeCache, emit, emitNull, stampRun } from "./_common.mjs";
+
+// bin/weather-now: apple-weather on macOS when installed, Open-Meteo otherwise.
+const WEATHER_BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/weather-now");
 
 const { situation: sit, context } = await readStdinJson();
 
@@ -10,7 +15,7 @@ let cur = readCache("weather");
 let prev = cur; // for delta detection
 if (!cur || cur._age_min >= TTL_MIN) {
   try {
-    const out = execSync("${MERLIN_HOME_USER}/dev/merlin/bin/apple-weather --findme --json 2>/dev/null", {
+    const out = execSync(`"${WEATHER_BIN}" --json 2>/dev/null`, {
       encoding: "utf8", timeout: 10000,
     });
     const w = JSON.parse(out);

@@ -33,6 +33,7 @@ import { spawnSync } from "node:child_process";
 import { canonicalKey, canonicalDisplay, canonicalAttrs } from "../lib/suggestion-key.mjs";
 import { shouldFilter } from "../lib/suggestion-recall.mjs";
 import { appendSurfaced } from "../lib/suggestion-history.mjs";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const args = process.argv.slice(2);
 function flag(name, hasValue = true) {
@@ -123,9 +124,9 @@ if (findings && findings.length > 0) {
 // 1. Send the ping via merlin-send-curl --capture-id.
 // ---------------------------------------------------------------------------
 const HOME = os.homedir();
-const SEND_BIN = path.join(HOME, "dev/merlin/bin/merlin-send-curl");
-const FEEDBACK_PATH = path.join(HOME, "dev/merlin/data/hum-feedback.jsonl");
-const LOCK_PATH = path.join(HOME, "dev/merlin/data/.hum-feedback.lock");
+const SEND_BIN = path.join(MERLIN_HOME, "bin/merlin-send-curl");
+const FEEDBACK_PATH = path.join(MERLIN_HOME, "data/hum-feedback.jsonl");
+const LOCK_PATH = path.join(MERLIN_HOME, "data/.hum-feedback.lock");
 
 const captureFile = path.join(os.tmpdir(), `hum-ping-capture.${process.pid}.${Date.now()}`);
 const sendArgs = ["--capture-id", captureFile];

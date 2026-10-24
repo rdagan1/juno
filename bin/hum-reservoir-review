@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -31,7 +32,7 @@ if (keywords.length === 0) {
   process.exit(2);
 }
 
-const file = path.join(os.homedir(), "dev/merlin/data/hum-ideas.jsonl");
+const file = path.join(MERLIN_HOME, "data/hum-ideas.jsonl");
 
 if (!fs.existsSync(file)) {
   console.log("0 matches (reservoir file not found)");

@@ -80,8 +80,11 @@ Gmail Pub/Sub push needs a public HTTPS URL. Options:
 ### Hookdeck path
 
 ```bash
-# Install
+# Install — macOS
 brew install hookdeck/hookdeck/hookdeck-cli
+# Install — Linux (any distro with Node; or grab a release binary from
+# github.com/hookdeck/hookdeck-cli/releases and put it on PATH)
+npm install -g hookdeck-cli
 
 # Sign in
 hookdeck login
@@ -98,7 +101,7 @@ MERLIN_HOOKDECK_URL=https://hkdk.events/<your-connection-id>
 
 Then update the Pub/Sub subscription from step 2 to point at that URL.
 
-The `process-manager` keeps Hookdeck alive as a child process — see `system/services.json`. On macOS launchd / Linux systemd installs, Hookdeck runs as part of the merlin service.
+The `process-manager` keeps Hookdeck alive as a child process — see `system/services.json`. On macOS launchd / Linux systemd installs, Hookdeck runs as part of the merlin service. It only starts when `hookdeck` is on the service's PATH (checked each time process-manager starts), so restart the service after installing it: `merlin restart session`.
 
 ## 4. Start the watch
 

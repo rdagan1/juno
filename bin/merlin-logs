@@ -28,9 +28,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const HOME = process.env.HOME;
-const LOGDIR = path.join(HOME, "dev/merlin/agent/logs");
+const LOGDIR = path.join(MERLIN_HOME, "agent/logs");
 const DATA_DIR = path.join(process.env.MERLIN_HOME || path.join(HOME, "Dev/merlin"), "data");
 
 const SOURCES = {

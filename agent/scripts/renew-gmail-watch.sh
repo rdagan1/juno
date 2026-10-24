@@ -1,14 +1,15 @@
 #!/bin/bash
 # renew-gmail-watch.sh — refreshes the Gmail push notification watch
 # Gmail watch expires every 7 days. Run daily to stay ahead.
-# Add to crontab: 0 6 * * * ${MERLIN_HOME_USER}/dev/merlin/agent/scripts/renew-gmail-watch.sh
+# Add to crontab: 0 6 * * * ${MERLIN_HOME}/agent/scripts/renew-gmail-watch.sh
 #
 # Writes data/gmail-watch-last.json {at, expiresAt, ok, error} on every
 # run so watchdog.sh can alert on failure or near-expiry before pushes break.
 
-LOG="${MERLIN_HOME_USER}/dev/merlin/agent/logs/gmail-watch.log"
-TOKEN_FILE="${MERLIN_HOME_USER}/dev/merlin/credentials/gmail-push-token.json"
-LAST_FILE="${MERLIN_HOME_USER}/dev/merlin/data/gmail-watch-last.json"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+LOG="${MERLIN_HOME}/agent/logs/gmail-watch.log"
+TOKEN_FILE="${MERLIN_HOME}/credentials/gmail-push-token.json"
+LAST_FILE="${MERLIN_HOME}/data/gmail-watch-last.json"
 PROJECT_ID="${MERLIN_GCP_PROJECT}"
 
 NOW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')

@@ -102,14 +102,18 @@ A systemd-user service runs as your user without root. Any 64-bit distro with sy
 - **Claude Code**: `npm install -g @anthropic-ai/claude-code` (or the native installer, which puts `claude` in `~/.local/bin`), then run `claude` once over SSH to log in. On a headless VM, the login flow prints a URL to open on another machine.
 - **Ollama**: install per Ollama's Linux docs (it registers a system `ollama.service`), then `ollama pull gemma3:4b && ollama pull nomic-embed-text`. The watchdog restarts it only if your user may do so without a password (a user unit, or a polkit rule) — it never uses sudo.
 - **Tailscale or equivalent**: if you want to reach the host's wiki UI at `:9096` from elsewhere on your network.
+- **Config**: `./bin/merlin init` (writes `.env`, the webhook token, and seeds `data/` from `examples/`). Set `MERLIN_WEATHER_LAT` / `MERLIN_WEATHER_LON` in `.env` for weather — on Linux `bin/weather-now` uses Open-Meteo (no key).
+- **Gmail push (optional)**: `npm install -g hookdeck-cli` — process-manager runs Hookdeck only when it's on PATH. See [`integrations/gmail.md`](integrations/gmail.md).
 
-### 2. Install the unit
+What doesn't exist on Linux: Apple Notes / iMessage sources (`context-sync` skips them), `ioreg` idle time in `merlin context`, and the companion-app builds. Everything else — supervisors, channels, jobs, watchdog, memory, wiki — is the same code on both platforms.
+
+### 2. Install the units
 
 ```bash
 ./scripts/install-systemd.sh
 ```
 
-This renders `system/systemd/merlin.service` into `~/.config/systemd/user/` with your checkout path and current `node`, enables lingering (`loginctl enable-linger`, so the service runs with nobody logged in — if that needs root it prints the `sudo` command for you), and enables + starts the unit. Re-run it after moving the checkout or switching Node versions. The unit deliberately has no `EnvironmentFile=`: process-manager loads `.env` itself.
+This renders `system/systemd/merlin.service` plus `merlin-heartbeat.{service,timer}` into `~/.config/systemd/user/` with your checkout path and current `node`, enables lingering (`loginctl enable-linger`, so the service runs with nobody logged in — if that needs root it prints the `sudo` command for you), enables + starts them, and installs the scheduled-jobs crontab block (`merlin cron install`, step 4). Re-run it after moving the checkout or switching Node versions. The units deliberately have no `EnvironmentFile=`: process-manager loads `.env` itself.
 
 Run it from a real login session (SSH), not `su`/`sudo -u`, so `systemctl --user` can reach your user manager.
 
@@ -123,14 +127,16 @@ tail -f agent/logs/claude-launchagent.err.log   # process-manager's own log
 
 ### 4. Scheduled jobs + watchdog
 
-Same as macOS: cron entries that run the trigger scripts listed in `system/tasks.json` (`./bin/merlin cron` shows what's installed; `./bin/merlin doctor` flags drift), plus the watchdog every 5 minutes:
+Cron runs the trigger scripts listed in `system/tasks.json`, plus the watchdog (every 5 min), log rotation (03:00) and — once Gmail is set up — the daily Gmail watch renewal. `install-systemd.sh` already did this; to regenerate after editing `tasks.json` or setting up Gmail:
 
-```cron
-*/5 * * * * $HOME/Dev/merlin/agent/scripts/watchdog.sh
-0 3 * * *   $HOME/Dev/merlin/agent/scripts/rotate-agent-logs.sh
+```bash
+./bin/merlin cron install      # (re)writes one marked block; your own crontab lines are untouched
+./bin/merlin cron              # what's installed, mapped to tasks.json
+./bin/merlin doctor            # flags tasks.json ↔ crontab drift
+./bin/merlin cron uninstall    # removes only the merlin block
 ```
 
-Set `MERLIN_HOME=` at the top of the crontab if your checkout isn't at `~/Dev/merlin`.
+The block pins `MERLIN_HOME` and a `PATH` that includes your current `node`, so cron's minimal environment is enough. Works on macOS too.
 
 ### Stop / restart
 

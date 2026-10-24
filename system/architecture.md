@@ -259,8 +259,9 @@ Both modes are first-class. The kernel is auth-mode-neutral — pick whichever f
 | `agent/logs/supervisor-{ops,chat}/events.ndjson` | Full session stream (one JSON line per turn). Survives restarts. |
 | `merlin logs <job>` | Tail the log file for a specific job. |
 | `GET :9093/health` | JSON: `{childAlive, lastTurnAt, turnCount, cost, restarts, up}`. Webhook channels check this before dispatching to avoid queueing into a dead agent. |
-| Heartbeat sender | LaunchAgent / systemd timer (`merlin-heartbeat.timer`) that POSTs system health to a configurable destination every 2 min (Firebase RTDB, generic webhook, whatever you wire). |
-| Watchdog | Cron every 2 min. Detects stuck/stale agents, OAuth-expiry, channel disconnects. Follows heal-then-alert: a probe failure self-heals first, only escalates on consecutive failures. |
+| Heartbeat sender | `agent/scripts/heartbeat-sender.sh`, run every 2 min by a LaunchAgent / systemd timer (`merlin-heartbeat.timer`). Appends a JSON health snapshot to `logs/heartbeat.log` (what `merlin status` checks) and sends it to `MERLIN_HEARTBEAT_URL` or Firebase RTDB if configured. |
+| `agent/logs/outbound.log` | One JSON line per `merlin-send-curl` attempt: precheck verdict, delivery path (phone / email / none). `merlin logs outbound`. |
+| Watchdog | `agent/scripts/watchdog.sh`, cron every 5 min (`merlin cron install`). Detects stuck/stale agents, OAuth-expiry, channel disconnects. Follows heal-then-alert: a probe failure self-heals first, only escalates on consecutive failures. |
 
 ---
 
@@ -286,9 +287,11 @@ apps/
   companion/           iOS/macOS chat app
   spotter/             iOS fitness tracker
 
-bin/                   user-facing CLIs (merlin, wiki, memory, email-send, etc.)
+bin/                   user-facing CLIs (merlin, wiki, memory, email-send, email-mem,
+                       merlin-send-curl, context-sync/-search, weather-now, etc.)
 lib/                   shared libraries (wiki-store, memory-store, local-llm, triage-log,
-                       supabase-rest, apns-push, suggestion ledger, ...)
+                       context-memory, email-memory, load-env, supabase-rest,
+                       apns-push, suggestion ledger, ...)
 
 system/
   architecture.md      this doc
@@ -322,7 +325,9 @@ Restart semantics:
 - `kill <process-manager-pid>` → `init` respawns it. The supervisors then come back, the children come back, the session-ids persist.
 - `merlin restart <ops|chat|hookdeck|wiki>` → SIGTERMs that child's pid (looked up on `:9095/health`); process-manager respawns it. `merlin restart session` restarts the whole tree through init (`launchctl kickstart -k` / `systemctl --user restart merlin.service`).
 
-**Platform portability.** The kernel is plain Node and runs on macOS and Linux. Shell scripts under `agent/scripts/` go through `agent/scripts/lib/portable.sh` for anything that differs between BSD and GNU userland or between launchd and systemd (`file_mtime`/`file_age`, `iso_utc_to_epoch`, `date_ago`, `restart_process_manager`, `restart_ollama`, `restart_user_service`) — never call `stat -f`, `date -v`/`-j`, `launchctl`, or `brew` directly in a script. `bin/merlin` reads service state from `launchctl list` on macOS and `systemctl --user show` on Linux; `system/services.json` entries carry a launchd `label` and/or a `systemd_unit`, and entries without an id for the current platform are skipped. macOS-only surfaces: AppleScript tools, `ioreg` idle time in `merlin context`, the companion-app builds + TestFlight runner.
+**Platform portability.** The kernel is plain Node and runs on macOS and Linux. Shell scripts under `agent/scripts/` go through `agent/scripts/lib/portable.sh` for anything that differs between BSD and GNU userland or between launchd and systemd (`file_mtime`/`file_age`, `iso_utc_to_epoch`, `date_ago`, `restart_process_manager`, `restart_ollama`, `restart_user_service`) — never call `stat -f`, `date -v`/`-j`, `launchctl`, or `brew` directly in a script. `bin/merlin` reads service state from `launchctl list` on macOS and `systemctl --user show` on Linux; `system/services.json` entries carry a launchd `label` and/or a `systemd_unit`, and entries without an id for the current platform are skipped. macOS-only surfaces: AppleScript tools, Apple Notes / iMessage `context-sync` sources (skipped when `bin/notes` / `bin/imsg` are absent), `ioreg` idle time in `merlin context`, the companion-app builds + TestFlight runner. Weather goes through `bin/weather-now` (apple-weather when installed, else Open-Meteo at `MERLIN_WEATHER_LAT/LON`). Paths: every entry point defaults `MERLIN_HOME` to its own checkout (never a hardcoded `~/dev/merlin`), and process-manager exports it so `${MERLIN_HOME}` in `chat-mcp-config.json` resolves. `.env` is parsed by `lib/load-env.js` only (strips trailing ` # comments`, treats `KEY=` as unset). Scheduling: `merlin cron install` writes one marked crontab block from `tasks.json` + watchdog + log rotation; `scripts/install-systemd.sh` does units + linger + cron on Linux.
+
+**Outbound to the user.** `bin/merlin-send-curl` is the one path for agent-originated phone messages and liveness alerts: outbound precheck (`bin/outbound-precheck.mjs` if installed; fails open) → Supabase `merlin_messages` row + APNs push → fallback `email-send` to `MERLIN_OWNER_EMAIL` if Supabase is unconfigured or down. `--capture-id` returns the row id (or a `{"suppressed":true}` sentinel) to `hum-ping`.
 
 ---
 

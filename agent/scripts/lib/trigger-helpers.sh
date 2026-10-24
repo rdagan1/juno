@@ -8,7 +8,7 @@
 # Assumes callers export PATH to include the standard system bin dirs so node is
 # reachable under cron.
 
-: "${MERLIN_HOME:=${HOME}/Dev/merlin}"
+: "${MERLIN_HOME:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 
 HEALTH_PORT=${HEALTH_PORT:-9093}
 WEBHOOK_PORT=${WEBHOOK_PORT:-9092}
@@ -39,11 +39,14 @@ trigger_dispatch() {
     -d "$payload" > /dev/null 2>&1
 }
 
-# trigger_job <job-name> — standard dispatch pattern. Picks job-name as the
-# payload `{"job": "<name>"}` and retries once after 60s on supervisor unhealth.
+# trigger_job <job-name> [payload] — standard dispatch pattern. Default payload
+# is `{"job": "<name>"}` (playbook at agent/ops-agent/jobs/<name>.md); pass an
+# explicit payload for tasks driven by an ops-agent/CLAUDE.md section instead.
+# Retries once after 60s on supervisor unhealth.
 trigger_job() {
   TRIGGER_JOB="$1"
-  local payload="{\"job\": \"$TRIGGER_JOB\"}"
+  local payload="${2:-}"
+  [ -n "$payload" ] || payload="{\"job\": \"$TRIGGER_JOB\"}"
 
   if trigger_is_healthy; then
     trigger_dispatch "$payload"
@@ -62,4 +65,20 @@ trigger_job() {
 
   trigger_log "$TRIGGER_JOB failed: supervisor unhealthy after retry"
   return 1
+}
+
+# trigger_direct <job-name> <command...> — run a direct-script job (no webhook,
+# no agent) and log its outcome alongside the dispatched ones.
+trigger_direct() {
+  TRIGGER_JOB="$1"; shift
+  local out rc
+  out=$("$@" 2>&1); rc=$?
+  # node:sqlite prints an ExperimentalWarning on Node 22 — not a result line.
+  out=$(printf '%s\n' "$out" | grep -vE 'ExperimentalWarning|--trace-warnings')
+  if [ $rc -eq 0 ]; then
+    trigger_log "ok: $(echo "$out" | tail -1 | head -c 200)"
+  else
+    trigger_log "exit $rc: $(echo "$out" | tail -3 | tr '\n' ' ' | head -c 300)"
+  fi
+  return $rc
 }

@@ -163,12 +163,12 @@ const TOOLS = [
   // ── Context Search ──
   {
     name: "context_search",
-    description: "Search across all indexed sources (Apple Notes, iMessage, email memories, project files). Returns summaries + which tool to call for the full item. Use this BEFORE calling source-specific tools when the user asks about a topic that could span multiple sources.",
+    description: "Search across all indexed sources (wiki pages, email memories, project files, documents, Google Drive, watchlist, plus Apple Notes / iMessage on macOS). Returns summaries + which tool to call for the full item. Use this BEFORE calling source-specific tools when the user asks about a topic that could span multiple sources.",
     schema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Free-text search query" },
-        source: { type: "string", enum: ["notes", "imsg", "email", "files", "docs"], description: "Optional: filter to one source" },
+        source: { type: "string", enum: ["wiki", "email", "files", "docs", "gdrive", "watchlist", "notes", "imsg"], description: "Optional: filter to one source" },
       },
       required: ["query"],
     },

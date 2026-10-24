@@ -14,6 +14,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
+require("../lib/load-env.js").loadEnv();
 const cm = require("../lib/context-memory");
 const wiki = require("../lib/wiki-store");
 
@@ -38,6 +39,10 @@ async function run(command, args = []) {
 
 async function syncNotes() {
   process.stderr.write("Syncing notes... ");
+  if (!existsSync(path.join(BIN, "notes"))) {
+    console.error("skipped (bin/notes not installed — Apple Notes, macOS-only).");
+    return;
+  }
 
   const raw = await run(path.join(BIN, "notes"), ["list"]);
   if (!raw) {
@@ -80,6 +85,10 @@ async function syncNotes() {
 
 async function syncImsg() {
   process.stderr.write("Syncing imsg... ");
+  if (!existsSync(path.join(BIN, "imsg"))) {
+    console.error("skipped (bin/imsg not installed — iMessage, macOS-only).");
+    return;
+  }
 
   const raw = await run(path.join(BIN, "imsg"), ["chats", "--limit", "30"]);
   if (!raw) {
@@ -422,10 +431,12 @@ async function syncWatchlist() {
     return;
   }
 
-  const supabase = createClient(
-    "https://${MERLIN_SUPABASE_PROJECT}.supabase.co",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zem93cmtqaGZzdHB0bnNzcnprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzMDU2NjAsImV4cCI6MjA5MTg4MTY2MH0.seXkEaAFoc5Zw-MTj1dNKMR5hSnGvf1ijjv3o5WAs20"
-  );
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!key) {
+    console.error("skipped (SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY not set).");
+    return;
+  }
+  const supabase = createClient((process.env.SUPABASE_URL || `https://${process.env.MERLIN_SUPABASE_PROJECT}.supabase.co`), key);
 
   const { data, error } = await supabase.from("watchlist").select("*");
   if (error) {

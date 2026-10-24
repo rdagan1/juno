@@ -16,6 +16,7 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const { loadEnv } = require("../lib/load-env.js");
 const { guessMimeType } = require("../lib/mime-types.js");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 loadEnv();
 
@@ -25,10 +26,10 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const DEFAULT_FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || "${MERLIN_AGENT_FROM_EMAIL}";
+const DEFAULT_FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || process.env.MERLIN_AGENT_FROM_EMAIL;
 const DEFAULT_FROM_NAME = process.env.EMAIL_FROM_NAME || "Merlin";
-const DEFAULT_REPLY_TO = process.env.EMAIL_REPLY_TO || "${MERLIN_AGENT_FROM_EMAIL}";
-const SENT_LOG = path.join(process.env.HOME, "dev/merlin/data/merlin-sent-mail.jsonl");
+const DEFAULT_REPLY_TO = process.env.EMAIL_REPLY_TO || process.env.MERLIN_AGENT_FROM_EMAIL;
+const SENT_LOG = path.join(MERLIN_HOME, "data/merlin-sent-mail.jsonl");
 
 function parseArgs(argv) {
   const a = {
@@ -110,8 +111,8 @@ async function send(a) {
   // outbound to third parties (mkt-outreach-apply, etc.) is unaffected.
   // Set EMAIL_SEND_ALLOW_DASHES=1 to override for one-off paste-throughs.
   if (
-    a.fromAddress === "${MERLIN_AGENT_FROM_EMAIL}" &&
-    String(a.to).toLowerCase() === "${MERLIN_OWNER_EMAIL}" &&
+    a.fromAddress === process.env.MERLIN_AGENT_FROM_EMAIL &&
+    String(a.to).toLowerCase() === (process.env.MERLIN_OWNER_EMAIL || "").toLowerCase() &&
     !process.env.EMAIL_SEND_ALLOW_DASHES
   ) {
     const haystack = `${a.subject}\n${a.body}`;
@@ -190,8 +191,8 @@ async function send(a) {
   // the default Merlin address and the recipient is ${MERLIN_OWNER_EMAIL} — i.e.
   // a self-addressed agent memo. Fires in the background; failures are silent.
   if (
-    a.fromAddress === "${MERLIN_AGENT_FROM_EMAIL}" &&
-    String(a.to).toLowerCase() === "${MERLIN_OWNER_EMAIL}"
+    a.fromAddress === process.env.MERLIN_AGENT_FROM_EMAIL &&
+    String(a.to).toLowerCase() === (process.env.MERLIN_OWNER_EMAIL || "").toLowerCase()
   ) {
     const { spawn } = await import("node:child_process");
     spawn(

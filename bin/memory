@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // memory — hybrid (FTS5 + semantic) retrieval over auto-memory files.
 //
-// Auto-memory lives at ~/.claude/projects/-Users-mraccah-Dev-merlin/memory/*.md
+// Auto-memory lives at ~/.claude/projects/<slug of MERLIN_HOME>/memory/*.md
 // and is loaded into every Claude Code conversation via MEMORY.md. This CLI
 // adds the retrieval/ranking/logging layer — use it when the agent needs
 // paraphrase-tolerant search over the profile, feedback rules, projects, etc.
@@ -22,12 +22,10 @@ const path = require("node:path");
 const os = require("node:os");
 const ms = require("../lib/memory-store.js");
 const mlint = require("../lib/memory-lint.js");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
 
 const HOME = os.homedir();
-const DEFAULT_EVAL_CASES = path.join(
-  HOME,
-  "dev/merlin/data/memory-eval-cases.json",
-);
+const DEFAULT_EVAL_CASES = path.join(MERLIN_HOME, "data/memory-eval-cases.json");
 
 const args = process.argv.slice(2);
 const [cmd, ...rest] = args;

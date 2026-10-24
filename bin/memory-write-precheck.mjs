@@ -31,7 +31,7 @@
 //   # → {"decision":"conflict","conflicts":[...],"resolution":"...","reason":"..."}
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -39,7 +39,8 @@ const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const WIKI_BIN   = path.resolve(__dir, "wiki");
-const CLAUDE_BIN = "${MERLIN_HOME_USER}/.local/bin/claude";
+const LOCAL_CLAUDE = path.join(process.env.HOME, ".local/bin/claude");
+const CLAUDE_BIN = process.env.CLAUDE_BIN || (existsSync(LOCAL_CLAUDE) ? LOCAL_CLAUDE : "claude");
 const LOG_FILE   = path.resolve(__dir, "..", "data", "memory-write-precheck-log.jsonl");
 
 function emit(obj) {
