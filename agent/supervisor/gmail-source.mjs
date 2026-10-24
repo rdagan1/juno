@@ -17,13 +17,14 @@ import { spawnSync } from "node:child_process";
 // Step 0b rule already covered this case, but the LLM-side check was not
 // firing reliably (5 distinct blocked senders bypassed intake on 2026-05-18 alone).
 // Hardwiring it here removes the dependency on agent recall.
-const SPAM_FILTER_BIN = path.join(process.env.HOME, "dev/merlin/bin/spam-filter");
-const GMAIL_ACTION_BIN = path.join(process.env.HOME, "dev/merlin/bin/gmail-action");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(process.env.HOME, "Dev/merlin");
+const SPAM_FILTER_BIN = path.join(MERLIN_HOME, "bin/spam-filter");
+const GMAIL_ACTION_BIN = path.join(MERLIN_HOME, "bin/gmail-action");
 // Intake-skip rules — sender/subject patterns whose triage outcome is
 // mechanical (label + mark-read with no LLM evaluation needed). The file is
 // gitignored (data/ is); operators populate it themselves with patterns
 // observed in their own mail flow. Shipped empty.
-const INTAKE_SKIP_RULES_FILE = path.join(process.env.HOME, "dev/merlin/data/intake-skip-rules.json");
+const INTAKE_SKIP_RULES_FILE = path.join(MERLIN_HOME, "data/intake-skip-rules.json");
 function extractEmailAddr(fromHeader) {
   if (!fromHeader) return "";
   const m = String(fromHeader).match(/<([^>]+)>/);
@@ -135,11 +136,11 @@ const SELF_INFLICTED_COOLDOWN_MS = 45000; // suppress empty-history dispatches f
 // ~60s of a label/star/mark-read write, but we've seen some arrive 2-3 min
 // later when Gmail's history pipeline is backed up — so give it 5 min.
 const SELF_ACTION_WINDOW_MS = 5 * 60 * 1000;
-const SELF_ACTION_MARKER = path.join(process.env.HOME, "dev/merlin/data/.gmail-action-last-at");
+const SELF_ACTION_MARKER = path.join(MERLIN_HOME, "data/.gmail-action-last-at");
 const CATCHUP_INTERVAL_MS = 30 * 60 * 1000; // check for missed emails every 30 min
 const STORM_THRESHOLD = 20; // max individual dispatches within storm window before consolidating
 const STORM_WINDOW_MS = 60 * 1000; // 60-second window for storm detection
-const TOKEN_FILE = path.join(process.env.HOME, "dev/merlin/credentials/gmail-push-token.json");
+const TOKEN_FILE = path.join(MERLIN_HOME, "credentials/gmail-push-token.json");
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 // True if `bin/gmail-action` wrote to the self-action marker within the

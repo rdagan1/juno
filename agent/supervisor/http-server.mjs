@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 
 const MAX_BODY = 64 * 1024;
 const HOME = process.env.HOME;
-const MERLIN_HOME = process.env.MERLIN_HOME || path.join(HOME, "dev/merlin");
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(HOME, "Dev/merlin");
 const JOBS_DIR = path.join(MERLIN_HOME, "agent/ops-agent/jobs");
 // Personal-overlay drop. Jobs here are dispatchable identically to bundled
 // jobs; kernel jobs win on name conflicts. See docs/architecture-public-private.md.

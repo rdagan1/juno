@@ -287,7 +287,7 @@ apps/
   spotter/             iOS fitness tracker
 
 bin/                   user-facing CLIs (merlin, wiki, memory, email-send, etc.)
-lib/                   shared libraries (wiki-store, memory-store, local-llm,
+lib/                   shared libraries (wiki-store, memory-store, local-llm, triage-log,
                        supabase-rest, apns-push, suggestion ledger, ...)
 
 system/

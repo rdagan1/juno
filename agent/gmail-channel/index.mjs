@@ -11,8 +11,9 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { triageLog } = require("../../lib/triage-log.js");
 
-const LAST_HISTORY_FILE = join(process.env.HOME, "dev/merlin/data/last-history-id.json");
-const PAUSE_FLAG_FILE = join(process.env.HOME, "dev/merlin/data/.triage-paused");
+const MERLIN_HOME = process.env.MERLIN_HOME || join(process.env.HOME, "Dev/merlin");
+const LAST_HISTORY_FILE = join(MERLIN_HOME, "data/last-history-id.json");
+const PAUSE_FLAG_FILE = join(MERLIN_HOME, "data/.triage-paused");
 const MAX_BODY_SIZE = 64 * 1024; // 64KB — Pub/Sub messages are small
 
 function isTriagePaused() {
