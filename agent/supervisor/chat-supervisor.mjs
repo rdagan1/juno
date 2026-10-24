@@ -157,7 +157,7 @@ class ChatSupervisor {
         for (const block of ev.message.content) {
           if (block.type === "tool_use") {
             this.activeToolMap.set(block.id, block.name);
-            if (this.currentTurn && block.name === "mcp__phone-channel__reply") {
+            if (this.currentTurn && (block.name === "mcp__phone-channel__reply" || block.name === "mcp__whatsapp__reply")) {
               this.currentTurn.replyCalled = true;
             }
           } else if (block.type === "text" && this.currentTurn && typeof block.text === "string") {
@@ -178,13 +178,14 @@ class ChatSupervisor {
       // Only applies to user-initiated `merlin` dispatches; init / system
       // pings are allowed to end without a reply.
       const t = this.currentTurn;
-      if (t && t.source === "merlin" && !t.replyCalled) {
+      if (t && (t.source === "merlin" || t.source === "whatsapp") && !t.replyCalled) {
         const orphaned = t.text.join("\n").trim();
         if (orphaned.length >= 20) {
           this.safetyNetFireCount++;
           console.error(`[chat-supervisor] SAFETY NET: orphaned assistant text (${orphaned.length} chars), no reply tool call — auto-posting`);
           this.eventLog.append({ kind: "safety_net.orphaned_reply", chars: orphaned.length, source: t.source, preview: orphaned.slice(0, 120) });
-          this._postOrphanedReply(orphaned).catch((e) => console.error(`[chat-supervisor] safety net post failed: ${e.message}`));
+          const post = t.source === "whatsapp" ? this._postOrphanedWhatsApp(orphaned) : this._postOrphanedReply(orphaned);
+          post.catch((e) => console.error(`[chat-supervisor] safety net post failed: ${e.message}`));
         }
       }
       this.currentTurn = null;
@@ -391,6 +392,20 @@ class ChatSupervisor {
       if (m) return m[1].trim();
     } catch {}
     return null;
+  }
+
+  // WhatsApp turns: deliver orphaned text through the whatsapp-channel
+  // daemon's localhost API instead of Supabase.
+  async _postOrphanedWhatsApp(message) {
+    const port = process.env.WHATSAPP_PORT || 9097;
+    const res = await fetch(`http://127.0.0.1:${port}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`whatsapp HTTP ${res.status}`);
+    console.error(`[chat-supervisor] safety net: orphaned reply sent via WhatsApp (${message.length} chars)`);
   }
 
   async _postOrphanedReply(message) {

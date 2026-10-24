@@ -284,6 +284,8 @@ Any scheduled job whose output exceeds a short pointer — roughly more than **1
 2. **One short phone pointer** via `${MERLIN_HOME}/bin/merlin-send-curl --no-push "<≤1 line: what was emailed + a short hook>"`. No bulk content on the phone channel, no per-category / per-item messages. **`--no-push` is required** — `merlin-send-curl` fires its own `merlin-notify` push by default, so omitting `--no-push` doubles the APNs delivery with the explicit step 3 push.
 3. **One APNs push** via `${MERLIN_HOME}/bin/merlin-notify "<subject-line summary>"`.
 
+**WhatsApp hosts:** when `WHATSAPP_OWNER` is set in `.env`, steps 2 and 3 collapse into one `${MERLIN_HOME}/bin/whatsapp-send "<pointer>"` (WhatsApp notifies the phone itself). If `whatsapp-send` exits non-zero, fall back to the `merlin-send-curl` path.
+
 This applies to every cron/trigger-driven job: morning-digest, weekly summaries, monthly summaries, hum-daily, hum-review, etc. The reference template is `jobs/morning-digest.md` — copy its shape. Exempt: `hum` (already pointer-only by design) and live chat-agent replies (real-time, interactive). If a playbook still instructs per-category phone-channel messages, the playbook is stale — follow this rule and ping the user so the playbook gets updated.
 
 ### Never paste `merlin doctor` into user-facing emails

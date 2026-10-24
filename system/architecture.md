@@ -129,6 +129,7 @@ The channels in this tree:
 | `agent/webhook-channel/` | ops :9092 | Local cron dispatch — scheduled trigger scripts POST a webhook to fire a job |
 | `agent/gmail-channel/` | ops :9090 | Inbound email via Google Pub/Sub push (typically tunneled with Hookdeck or ngrok) |
 | `agent/phone-channel/` | chat :9094 | Real-time chat from the companion iOS app via Supabase Realtime |
+| `agent/whatsapp-channel/` | chat :9094 | Real-time chat over WhatsApp (linked device). Also the egress path for replies and job pings (`:9097/send`) on hosts without the companion app |
 | `agent/dispatch-bridge/` | chat :9094 | Server-to-server push-notification ingest, useful for pushing system alerts into chat |
 
 A channel doesn't have to be HTTP — it just has to end in `POST /dispatch`. You can write a Slack channel, a SMS channel (Twilio), a generic-API-polling channel. Drop it in `agent/`, point its package.json at the entry mjs, give it a port if it needs one, and the process-manager picks it up.
@@ -276,6 +277,7 @@ agent/                 the kernel
   config/              agents.json + schema + loader
   dispatch-bridge/     server-to-server dispatch channel
   gmail-channel/       opt-in Gmail Pub/Sub ingress
+  whatsapp-channel/    opt-in WhatsApp ingress/egress (linked device, Baileys) + reply MCP
   moodle-mcp/          read-only Moodle MCP server (courses, files, deadlines, grades)
   phone-channel/       opt-in companion-app realtime ingress
   webhook-channel/     opt-in HTTP webhook ingress
@@ -360,6 +362,7 @@ You're starting with a working kernel and a small reference set, not a turnkey a
 
 - **2026-10-24 — Moodle integration.** Added `agent/moodle-mcp/` (read-only Moodle Web Services MCP server, 12 `moodle_*` tools), registered in `agent/supervisor/mcp-config.json` + `chat-mcp-config.json` and allowlisted as `mcp__moodle__*` in `agent/config/agents.json`. Token helper `bin/moodle-token`. Guide: `docs/integrations/moodle.md`. First step toward customizing Merlin as a study assistant.
 - **2026-10-24 — Study assistant on Moodle.** `moodle_changes` tool (`agent/moodle-mcp/changes.mjs`) diffs a snapshot of active courses against per-cursor state in `data/moodle/state-<cursor>.json`. New `study-digest` job (`jobs/study-digest.md`, 20:00 daily, registered in `system/tasks.json`); morning-digest gains a COURSEWORK section; hum harvesters `moodle-deadlines` + `moodle-updates` (opt-in via `data/hum-interests.json`); chat-agent § Study Help (material-grounded answers, quizzing, homework-integrity rule). `moodle_grades` degrades gracefully on sites that hide the grade report.
+- **2026-10-24 — WhatsApp channel.** `agent/whatsapp-channel/daemon.mjs` (process-manager child, started only when `WHATSAPP_OWNER` is set) holds one WhatsApp Web linked-device connection via Baileys. Owner messages → chat-supervisor `POST :9094/dispatch` (source `whatsapp`, priority high; images/documents saved to `data/whatsapp/media/`). Egress through its localhost API `:9097/send`, used by the stateless `whatsapp` MCP server (`mcp__whatsapp__reply`, loaded by both agents), `bin/whatsapp-send` (jobs/scripts), and the chat-supervisor orphaned-text safety net (now source-aware). Supports a dedicated number or WhatsApp "Message yourself" self-chat. Auth state in `data/whatsapp-auth/`. Unofficial client — ToS/ban risk documented in `docs/integrations/whatsapp.md`. Alternative to the companion app for users without an Apple developer setup.
 
 ---
 

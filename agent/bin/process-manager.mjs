@@ -114,6 +114,22 @@ function createProcesses() {
     })
   );
 
+  // 5. WhatsApp channel — opt-in. Only started once WHATSAPP_OWNER is set
+  // in .env (and the device has been linked with `daemon.mjs --link`).
+  // Holds the single WhatsApp Web connection; localhost API on :9097.
+  if (process.env.WHATSAPP_OWNER) {
+    children.push(
+      new ManagedProcess({
+        name: "whatsapp-channel",
+        command: NODE,
+        args: [path.join(AGENT_DIR, "whatsapp-channel/daemon.mjs")],
+        cwd: path.join(AGENT_DIR, "whatsapp-channel"),
+        logFile: path.join(LOG_DIR, "whatsapp-channel.log"),
+        log,
+      })
+    );
+  }
+
   return children;
 }
 

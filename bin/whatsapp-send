@@ -1,0 +1,43 @@
+#!/usr/bin/env node
+// whatsapp-send — send a WhatsApp message to the owner via the whatsapp-channel
+// daemon (agent/whatsapp-channel/daemon.mjs). For jobs, harvester pings, and
+// alerts that originate outside a chat turn.
+//
+// Usage:
+//   whatsapp-send "Study digest emailed — 3 due this week."
+//   echo "long text" | whatsapp-send -
+//
+// Exit codes: 0 sent, 1 daemon refused (not connected / not linked), 2 usage,
+// 3 daemon unreachable.
+
+const arg = process.argv[2];
+if (!arg || arg === "-h" || arg === "--help") {
+  console.error('usage: whatsapp-send "<message>"  |  whatsapp-send - (read stdin)');
+  process.exit(2);
+}
+
+let message = arg;
+if (arg === "-") {
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  message = Buffer.concat(chunks).toString("utf8").trim();
+}
+
+const port = process.env.WHATSAPP_PORT || 9097;
+try {
+  const res = await fetch(`http://127.0.0.1:${port}/send`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    console.error(`whatsapp-send: ${body.error}`);
+    process.exit(1);
+  }
+  console.log(`sent (${body.parts} part${body.parts === 1 ? "" : "s"})`);
+} catch (err) {
+  console.error(`whatsapp-send: daemon unreachable on :${port} (${err.message})`);
+  process.exit(3);
+}

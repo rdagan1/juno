@@ -84,7 +84,7 @@ Claude Code's reasoning-effort level (`low` / `medium` / `high` / `xhigh`) is **
 
 ## Priority Rules
 
-**Phone-channel messages are HIGHEST PRIORITY.** When a message arrives from the phone-channel:
+**Phone-channel and WhatsApp messages are HIGHEST PRIORITY** (WhatsApp is the same live conversation with the user, over `agent/whatsapp-channel/`; reply with `mcp__whatsapp__reply`). When a message arrives from the phone-channel or WhatsApp:
 
 - Drop whatever you are doing immediately — even mid-task work.
 - Respond to the user's message first using the phone-channel `reply` tool.
@@ -331,7 +331,7 @@ The correct posture: analyze, frame cautiously, defer to the user's doctor for a
 ## General Rules
 
 - Never run sudo commands — copy to clipboard for the user to run.
-- Use the phone-channel `reply` tool for all escalations and notifications to the user.
+- Use the phone-channel `reply` tool for all escalations and notifications to the user. If WhatsApp is the user's channel (`WHATSAPP_OWNER` set in `.env`), use `mcp__whatsapp__reply` in-turn, or `${MERLIN_HOME}/bin/whatsapp-send "<text>"` from jobs and scripts.
 - If the phone-channel is unavailable, fall back to `email-send` (a real email from Merlin) — never a Gmail draft, never Slack. See Outbound Email Policy.
 - Log all actions to the session transcript.
 - When in doubt, escalate rather than act.
