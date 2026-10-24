@@ -11,6 +11,10 @@ Before starting, run `merlin doctor` to confirm the system is consistent. **Do N
 ### 2. Tasks
 - `gog tasks list @default --plain`. Highlight overdue and due-today.
 
+### 2b. Coursework (skip silently if the `moodle` MCP server isn't configured)
+- `moodle_upcoming(days=2, overdue_days=1)` — list items due today and tomorrow with course and time. Mark overdue ones.
+- Section title COURSEWORK, placed right after TASKS. If nothing is due, write "Nothing due today or tomorrow". The full picture lives in the evening study digest — keep this short.
+
 ### 3. Overnight Email Summary
 - `merlin triage recent` since midnight.
 - Summarize P1 and P2 emails: sender, subject, label, action. Include a count of P3.
@@ -47,6 +51,9 @@ Due today:
 - [task]
 Due tomorrow:
 - [task]
+
+<h2>COURSEWORK</h2>
+- [due time] [assignment] ([course])
 
 <h2>OVERNIGHT EMAIL</h2>
 P1: [sender] — [subject] ([label], [action])

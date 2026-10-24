@@ -23,6 +23,26 @@
       "job": "morning-digest"
     },
     {
+      "name": "study-digest",
+      "schedule": "0 20 * * *",
+      "schedule_human": "Daily at 8:00 PM",
+      "trigger_script": "agent/scripts/trigger-study-digest.sh",
+      "webhook_url": "http://localhost:9092",
+      "webhook_task": "STUDY DIGEST",
+      "ops_playbook_section": "Study Digest",
+      "delivers_to": "email+merlin",
+      "phrases": [
+        "study digest",
+        "study brief",
+        "coursework digest",
+        "what's due",
+        "moodle digest",
+        "study plan"
+      ],
+      "description": "Evening coursework brief from Moodle (read-only moodle MCP): changes since yesterday (announcements, due-date changes, grades, new files), unsubmitted work due in 7 days, exams/quizzes in 14 days, and proposed study blocks in tomorrow's free calendar time. Long-form delivery rule. Never creates calendar events without a YES.",
+      "job": "study-digest"
+    },
+    {
       "name": "hum",
       "schedule": "*/20 * * * *",
       "schedule_human": "Every 20 minutes — the always-on hum of ambient awareness",
@@ -122,7 +142,7 @@
         "summarize lecture",
         "recording summary"
       ],
-      "description": "Detect new lecture recordings on Moodle via browser automation (automation Chrome on CDP :9222, the user's logged-in session), transcribe locally with Hebrew Whisper (ivrit-ai) or use the platform's Hebrew captions, and summarize with a one-shot claude -p that pulls exam / not-on-exam / assignment / emphasis moments to the top. Heavy work runs in the trigger script (bin/moodle-recordings run); the ops-agent is dispatched only to email ready digests, create deadline tasks, drive the browser for players the scanner can't read, and send the re-login alert. See agent/ops-agent/jobs/moodle-recordings.md and docs/integrations/moodle.md.",
+      "description": "Detect new lecture recordings on Moodle via browser automation (automation Chrome on CDP :9222, the user's logged-in session), transcribe locally with Hebrew Whisper (ivrit-ai) or use the platform's Hebrew captions, and summarize with a one-shot claude -p that pulls exam / not-on-exam / assignment / emphasis moments to the top. Heavy work runs in the trigger script (bin/moodle-recordings run); the ops-agent is dispatched only to email ready digests, create deadline tasks, drive the browser for players the scanner can't read, and send the re-login alert. See agent/ops-agent/jobs/moodle-recordings.md and docs/integrations/moodle-recordings.md.",
       "job": "moodle-recordings"
     },
     {

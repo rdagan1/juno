@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to data/moodle-config.json. Used by bin/moodle-recordings (see docs/integrations/moodle.md). Only base_url is required; everything else has defaults.",
+  "_comment": "Copy to data/moodle-config.json. Used by bin/moodle-recordings (see docs/integrations/moodle-recordings.md). Only base_url is required; everything else has defaults.",
 
   "base_url": "https://moodle.example.ac.il",
   "cdp_url": "http://localhost:9222",

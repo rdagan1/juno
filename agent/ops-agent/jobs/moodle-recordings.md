@@ -6,6 +6,10 @@ MOODLE RECORDINGS: Deliver new lecture digests, and handle anything the automati
 
 Pipeline state lives in `${MERLIN_HOME}/data/moodle-recordings-state.json`, per-recording files in `${MERLIN_HOME}/data/moodle-recordings/<id>/` (`digest.json`, `digest.html`, `transcript.txt`, `candidates.json`, `sniff.json`). Config: `${MERLIN_HOME}/data/moodle-config.json` (template: `examples/moodle-config.example.json`).
 
+**Notification channel.** Pings below use `merlin-send-curl`. On WhatsApp hosts (`WHATSAPP_OWNER` set), send each ping with `${MERLIN_HOME}/bin/whatsapp-send "<text>"` instead, and replace the pointer + push pair in section 2 with one `whatsapp-send`.
+
+**Course data vs recordings.** Use the `moodle` MCP (`mcp__moodle__*`) for anything else about a course (deadlines, files, announcements). This job only covers recordings, which the MCP can't reach.
+
 Do the sections below in order. Skip a section when it has nothing to do.
 
 ## 1. Login alert
@@ -93,7 +97,7 @@ ${MERLIN_HOME}/bin/moodle-recordings list --status failed --json
 For each item with `escalated_at` null: read `last_error` and `failed_at_step`.
 
 - Transient-looking (`claude` timeout or rate limit, ffmpeg network error, HTTP 5xx): requeue once with `${MERLIN_HOME}/bin/moodle-recordings mark <id> new`.
-- `lecture-transcribe exit 3` (faster-whisper not installed) or other host setup problems: do not requeue. Tell the user once what to install (see `docs/integrations/moodle.md`).
+- `lecture-transcribe exit 3` (faster-whisper not installed) or other host setup problems: do not requeue. Tell the user once what to install (see `docs/integrations/moodle-recordings.md`).
 - Otherwise: `${MERLIN_HOME}/bin/moodle-recordings mark <id> failed --note "<short reason>"` and include it in the phone pointer.
 
 ## 5. Reply

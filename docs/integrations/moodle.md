@@ -1,93 +1,98 @@
-# Moodle lecture recordings
+# Integration: Moodle
 
-Merlin watches your Moodle courses for new lecture recordings. For each new one it transcribes the audio on your machine (Hebrew-first), writes a summary, and emails it to you. The things students care about come first in the summary: what the lecturer said will be on the exam, what won't be, assignments and deadlines, and points they stressed. Explicit deadlines become Google Tasks.
+`agent/moodle-mcp/` is a **read-only** MCP server that gives both agents access to your Moodle: enrolled courses, course materials (slides, PDFs, pages), deadlines, assignments and their submission status, quizzes, grades, and course announcements.
 
-Moodle has no API or MCP Merlin can use (university SSO, no tokens), so this runs on **browser automation**. Merlin attaches to the same automation Chrome the ops-agent's chrome-devtools MCP uses (CDP on port 9222) and reuses your logged-in session.
+It talks to Moodle's Web Services REST API, the same API the official Moodle mobile app uses. Most university Moodles have that enabled for students, so you usually don't need anything from the site admins.
 
-## How it works
+## 1. Get a token
 
-```mermaid
-flowchart LR
-    cron["cron */30<br/>trigger-moodle-recordings.sh"] --> run["bin/moodle-recordings run"]
-    run -->|CDP :9222| chrome["automation Chrome<br/>(your Moodle session)"]
-    chrome --> scan["scan courses + listings<br/>→ new recordings"]
-    scan --> sniff["open player, press play,<br/>capture m3u8/mp4/vtt"]
-    sniff -->|Hebrew captions| tx
-    sniff -->|audio via ffmpeg| whisper["bin/lecture-transcribe<br/>faster-whisper · ivrit-ai"] --> tx["transcript.txt<br/>[hh:mm:ss] lines"]
-    tx --> lex["Hebrew keyword pre-scan<br/>lib/lecture-highlights.mjs"] --> claude["claude -p (sonnet)<br/>digest JSON"]
-    claude --> html["digest.html (RTL)"]
-    html -->|dispatch only when ready| agent["ops-agent<br/>jobs/moodle-recordings.md"]
-    agent --> email["email + tasks + 1 phone pointer"]
-```
+The server authenticates with a web-service token. Which route works depends on how you log in to Moodle.
 
-- **Detection.** For each course, the scanner reads `/course/view.php?id=N` and keeps activities that are videos by type (Kaltura `kalvidres`, Zoom, `videofile`, Panopto, Echo360, VideoTime), plus links, files and LTI tools whose name looks like a recording (`הקלטה`, `הרצאה`, `שיעור`, `תרגול`, `recording`, ...). A Zoom activity is opened on its recordings tab, one item per meeting. Galleries that live in iframes (a Panopto folder or Kaltura media gallery behind LTI) are configured as `listings`. All frames are searched for links.
-- **First run is silent.** Everything already on Moodle is recorded as `baseline`. Only recordings that appear later are processed. Use `moodle-recordings scan --backfill 2` before the first run to also summarize the last 2 per course.
-- **Getting the audio.** The recording page is opened in a background tab and play is pressed. The scanner then records the media and caption URLs the player requests. If Hebrew captions come back (≥30 cues, mostly Hebrew), they are used directly and Whisper is skipped. Otherwise ffmpeg downloads mono 16 kHz audio using the browser's cookies.
-- **Transcription** runs on your machine with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and [ivrit-ai](https://huggingface.co/ivrit-ai)'s Hebrew fine-tune of Whisper large-v3-turbo. Audio never leaves the host. VAD filtering drops long silences (board-writing), which is where Whisper tends to invent text.
-- **Highlights.** Hebrew attaches prepositions to words ("במבחן", "שלבחינה", "ולמבחן"). The keyword pre-scan matches each term with an optional prefix and a strict word boundary, so "בחינם" (free) is not read as "בחינה" (exam). It also separates *exclusions* ("לא יהיה במבחן") from inclusions. The model checks these candidate moments against the transcript. If it drops every exam moment, they are added back to the digest marked "auto-detected; verify".
-- **Summary** is a one-shot `claude -p --model sonnet`. Lectures longer than about 2 hours are summarized in parts and then merged. The output has a TL;DR, timestamped highlights (type, the lecturer's own words, a note, and a date if one was given), a chronological outline, key concepts and action items.
-- **Delivery.** The ops-agent is dispatched only when something is ready. It emails each digest (subject prefixed `[מבחן]` when exam relevance is high), creates Google Tasks for dated exam and assignment mentions, and sends one phone pointer per batch.
-
-## Setup
-
-1. **Automation Chrome.** You need a Chrome running with `--remote-debugging-port=9222` on its own user-data dir. `agent/scripts/chrome-cdp-watch.sh` monitors it. Open Moodle in that Chrome and log in, including SSO, OTP and "remember me".
-2. **Dependencies:**
-   ```bash
-   cd "$MERLIN_HOME/bin" && npm install          # playwright-core
-   brew install ffmpeg                          # or apt install ffmpeg
-   pip3 install faster-whisper                  # local transcription
-   ```
-   The first transcription downloads the Whisper model, about 1.6 GB. CPU works: on Apple Silicon or a modern x86, a 90-minute lecture takes roughly 10-30 minutes with `int8`. With an NVIDIA GPU, set `"device": "cuda", "compute_type": "float16"`.
-3. **Config.** `cp examples/moodle-config.example.json data/moodle-config.json` and set `base_url`. Leave `auto_discover_courses: true` to pick up every course on your dashboard, or list course ids explicitly (the `id=` in the course URL).
-4. **Check it sees your courses:**
-   ```bash
-   bin/moodle-recordings courses
-   bin/moodle-recordings scan          # bootstrap: records existing recordings as baseline
-   bin/moodle-recordings list
-   ```
-5. **Cron:**
-   ```
-   */30 7-23 * * * $HOME/Dev/merlin/agent/scripts/trigger-moodle-recordings.sh
-   ```
-6. **Try one end to end:** `bin/moodle-recordings mark <id> new && bin/moodle-recordings process <id>`. Then open `data/moodle-recordings/<id>/digest.html`.
-
-## Configuration reference (`data/moodle-config.json`)
-
-| Key | Default | Meaning |
-|---|---|---|
-| `base_url` | required | Your Moodle root, e.g. `https://moodle.example.ac.il` |
-| `cdp_url` | `http://localhost:9222` | Automation Chrome DevTools endpoint |
-| `auto_discover_courses` | on if `courses` empty | Read courses from `/my/courses.php` |
-| `courses[]` | `[]` | `{id, name, listings?}`. `listings[]` = `{url, link_selector, settle_ms?}` for galleries |
-| `exclude_courses` | `[]` | Course ids to ignore during auto-discovery |
-| `recording_modules` | see example | Moodle module types considered at all |
-| `name_patterns` | Hebrew + English | Substrings that make a link, file or LTI activity count as a recording |
-| `login_url_patterns` | `/login/`, `sso`, `saml`, ... | Redirect targets that mean "session expired" |
-| `transcript_language` | `he` | Whisper language; also which captions are accepted |
-| `summary_language` | `he` | Language of the digest prose (`he` or `en`). Quotes stay verbatim |
-| `prefer_captions` | `true` | Use platform captions when they're Hebrew and substantial |
-| `keep_audio` | `false` | Keep `audio.m4a` after transcription |
-| `transcribe.model` / `device` / `compute_type` / `python` | ivrit-ai turbo / `auto` / `int8` / `python3` | Passed to `bin/lecture-transcribe` |
-| `summarizer.model` / `effort` / `chunk_chars` | `sonnet` / `medium` / `120000` | `claude -p` settings; transcripts longer than `chunk_chars` are split into parts |
-
-## Platform notes
-
-- **Kaltura (`kalvidres`)** and plain **video files** usually work out of the box. Kaltura serves a `playManifest` / HLS playlist.
-- **Panopto** usually comes in through an LTI folder. Add the LTI activity's URL as a `listing` with `link_selector: "a[href*='Viewer.aspx?id=']"`. Each session then becomes its own item. If your Panopto has Hebrew auto-captions turned on, they are used.
-- **Zoom cloud recordings** come from the Zoom activity's recordings tab. Zoom share links that need a passcode will end up as `no_media`.
-- **Unknown players** end up as `no_media`. The ops-agent then opens the page itself with the chrome-devtools MCP and looks for the stream URL. If it finds one, it calls `moodle-recordings set-media <id> <url>` and the next run handles the item. If not, it tells you once.
-
-## Operating it
+**A. You log in with a Moodle username + password** (a form on the Moodle site itself):
 
 ```bash
-bin/moodle-recordings list [--status new,no_media]   # pipeline state
-bin/moodle-recordings show <id>                      # paths, errors, attempts
-bin/moodle-recordings process <id>                   # run one item now (blocks)
-bin/moodle-recordings mark <id> new                  # requeue (e.g. after fixing a dependency)
-bin/moodle-recordings digest <id>                    # re-summarize from the existing transcript
-tail -f agent/logs/moodle-recordings.log
+bin/moodle-token login https://moodle.example.edu your-username
+# prompts for the password, prints the token
 ```
 
-Exit codes: `3` Moodle login needed (a one-shot "log in again" ping is sent), `5` Chrome CDP unreachable (`chrome-cdp-watch` alerts on that), `6` another run in progress.
+**B. Your university uses SSO** (you get redirected to a Microsoft/Google/Shibboleth page). Password exchange won't work here. Use the mobile-app launch flow instead:
 
-**Privacy.** Audio and transcription stay on the host. The transcript text is sent to Claude through your own `claude` login for summarizing, the same path every other Merlin agent uses. Nothing goes to other services.
+```bash
+bin/moodle-token sso https://moodle.example.edu
+# prints a launch.php URL
+```
+
+1. Open that URL in a desktop browser with DevTools → **Network** open (tick "Preserve log").
+2. Log in as usual. The browser ends on a failed `moodlemobile://token=…` redirect.
+3. Copy that URL from the Network tab, then run `bin/moodle-token decode 'moodlemobile://token=…'`. It prints the token.
+
+**C. Some sites show it directly:** Moodle → your profile menu → **Preferences → Security keys**. If a "Moodle mobile web service" key is listed, use that.
+
+If every route fails with "web services disabled" or "mobile app not enabled", the site has turned off the API. Ask the IT helpdesk whether students can use the Moodle mobile app.
+
+## 2. Configure `.env`
+
+```
+MOODLE_URL=https://moodle.example.edu
+MOODLE_TOKEN=<token from step 1>
+MOODLE_TIMEZONE=Asia/Jerusalem        # optional, IANA zone for rendered dates
+```
+
+If you went with option A, you can set `MOODLE_USERNAME` + `MOODLE_PASSWORD` instead of `MOODLE_TOKEN`. The server then exchanges them for a token at startup. A stored token is the better choice, because it keeps your password out of `.env`.
+
+Tokens usually last months, but they can be revoked (for example on a password change). If tools start returning `Invalid token`, repeat step 1.
+
+## 3. Install + verify
+
+```bash
+(cd agent/moodle-mcp && npm install)      # bootstrap.sh does this too
+(cd agent/moodle-mcp && npm test)         # offline tests against a fake Moodle
+```
+
+The server is registered in `agent/supervisor/mcp-config.json` (ops) and `chat-mcp-config.json` (chat), and allowlisted as `mcp__moodle__*` in `agent/config/agents.json`. Restart the supervisors to pick it up, then ask the agent to "run moodle_site_info". It should come back with your name and the site.
+
+For PDF text extraction, install poppler (`brew install poppler` / `apt install poppler-utils`). Without it, `moodle_get_file` still saves the PDF but returns no text.
+
+## Tools
+
+| Tool | What it returns |
+|---|---|
+| `moodle_site_info` | Connection check: site, student name, Moodle version |
+| `moodle_courses` | Enrolled courses (`include_past` for finished ones) |
+| `moodle_course_contents` | Sections → activities/resources → files with `file_url` |
+| `moodle_get_file` | Downloads a file to `data/moodle/files/<course_id>/`, returns extracted text (paged via `offset`) |
+| `moodle_upcoming` | Timeline of deadlines/events across all courses |
+| `moodle_assignments` | Assignments with due/cut-off dates, instructions, attachments |
+| `moodle_assignment_status` | Submitted? graded? grade + teacher feedback |
+| `moodle_grades` | Full grade report for a course |
+| `moodle_quizzes` | Quizzes/exams with open/close times, time limit, attempts |
+| `moodle_forums` / `moodle_forum_discussions` | Forums (incl. Announcements) and their latest posts |
+| `moodle_changes` | What's new since the last check (files, activities, assignments, due-date changes, announcements, grades). Per-`cursor` read positions; first call records a baseline |
+| `moodle_call` | Escape hatch for any other read-only `*_get_*` / `*_search_*` web-service function |
+
+Some sites hide the course grade report from the mobile API (the site's public config lists `mmaGrades` under disabled features). `moodle_grades` then returns `available: false`, and `moodle_assignment_status` still shows per-assignment grades and feedback.
+
+## Study-assistant features built on it
+
+| Piece | What it does | Where |
+|---|---|---|
+| Study digest | Evening email: changes since yesterday, unsubmitted work due in 7 days, exams in 14 days, proposed study blocks for tomorrow | `agent/ops-agent/jobs/study-digest.md`, cron via `agent/scripts/trigger-study-digest.sh` |
+| Morning brief | COURSEWORK section: due today/tomorrow | `agent/ops-agent/jobs/morning-digest.md` |
+| Hum `moodle-deadlines` | Pings about unsubmitted work as the deadline nears (72h → 48h → 24h → 6h escalation) | `agent/scripts/hum-harvesters/moodle-deadlines.mjs` |
+| Hum `moodle-updates` | Pings about new announcements, due-date changes, grades | `agent/scripts/hum-harvesters/moodle-updates.mjs` |
+| Lecture recordings | New recordings → local Hebrew transcription → exam-aware summary email. Uses browser automation, since recordings aren't in the Web Services API | `agent/ops-agent/jobs/moodle-recordings.md`; setup in [`moodle-recordings.md`](moodle-recordings.md) |
+| Chat study help | Answers grounded in the course's own files; quizzes and flashcards on request | `agent/chat-agent/CLAUDE.md` § Study Help |
+
+To turn them on:
+
+1. Cron: `0 20 * * * ${MERLIN_HOME}/agent/scripts/trigger-study-digest.sh`
+2. Hum: copy the `moodle-deadlines` / `moodle-updates` entries from `examples/hum-interests.example.json` into `data/hum-interests.json`.
+
+Change tracking state lives in `data/moodle/state-<cursor>.json` (cursors: `digest`, `hum`, `chat`). Delete a file to re-baseline that consumer.
+
+## Safety
+
+- **Read-only.** No tool submits, posts, or changes anything. `moodle_call` rejects any function name that doesn't contain `_get_` or `_search_`.
+- **The token never leaves your Moodle host.** `moodle_get_file` refuses URLs on any other host, so it can't leak the token through a link someone planted in course content.
+- Downloaded files live under `data/`, which is gitignored.
+- Course text and forum posts count as untrusted input under the prompt-injection rules in `agent/CLAUDE.md`.

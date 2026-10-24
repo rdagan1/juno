@@ -129,6 +129,7 @@ The channels in this tree:
 | `agent/webhook-channel/` | ops :9092 | Local cron dispatch — scheduled trigger scripts POST a webhook to fire a job |
 | `agent/gmail-channel/` | ops :9090 | Inbound email via Google Pub/Sub push (typically tunneled with Hookdeck or ngrok) |
 | `agent/phone-channel/` | chat :9094 | Real-time chat from the companion iOS app via Supabase Realtime |
+| `agent/whatsapp-channel/` | chat :9094 | Real-time chat over WhatsApp (linked device). Also the egress path for replies and job pings (`:9097/send`) on hosts without the companion app |
 | `agent/dispatch-bridge/` | chat :9094 | Server-to-server push-notification ingest, useful for pushing system alerts into chat |
 
 A channel doesn't have to be HTTP — it just has to end in `POST /dispatch`. You can write a Slack channel, a SMS channel (Twilio), a generic-API-polling channel. Drop it in `agent/`, point its package.json at the entry mjs, give it a port if it needs one, and the process-manager picks it up.
@@ -163,7 +164,7 @@ The registry of active jobs is `system/tasks.json` — each entry has a name, cr
 **Reference jobs ship:**
 - `agent/ops-agent/jobs/morning-digest.md` — daily summary of calendar/email/tasks, pushed to chat
 - `agent/ops-agent/jobs/hum.md` and `hum-{canary,daily,ideation,operations,review}.md` — the ambient-awareness loop (see § Hum)
-- `agent/ops-agent/jobs/moodle-recordings.md` — new Moodle lecture recordings → local Hebrew transcription → exam-aware digest email. Unusual shape: the heavy pipeline (`bin/moodle-recordings run`: browser scan over CDP, ffmpeg, faster-whisper, one-shot `claude -p`) runs inside the trigger script, and the agent is dispatched only to deliver and to handle exceptions (re-login alert, browser fallback for unknown video players). See [docs/integrations/moodle.md](../docs/integrations/moodle.md).
+- `agent/ops-agent/jobs/moodle-recordings.md` — new Moodle lecture recordings → local Hebrew transcription → exam-aware digest email. Unusual shape: the heavy pipeline (`bin/moodle-recordings run`: browser scan over CDP, ffmpeg, faster-whisper, one-shot `claude -p`) runs inside the trigger script, and the agent is dispatched only to deliver and to handle exceptions (re-login alert, browser fallback for unknown video players). See [docs/integrations/moodle-recordings.md](../docs/integrations/moodle-recordings.md).
 
 You write your own from there.
 
@@ -203,6 +204,8 @@ The hum-intent file (a markdown doc you author) defines what the loop should and
 `agent/tools-mcp/index.mjs` is one MCP server that exposes the entire `bin/` directory as MCP tools. Each CLI becomes a callable tool with stdin/stdout/exit-code conventions.
 
 Why: most agent work is "run this script and read the output." Going through MCP gives you (a) structured tool-call traces for the conversation history, (b) per-tool permissioning via `allowedTools`, and (c) a uniform shape no matter what the script is written in (bash, Node, Python).
+
+**Moodle MCP** (`agent/moodle-mcp/`) is a separate, read-only MCP server (`mcp__moodle__*`) loaded by both agents. It wraps a Moodle site's Web Services REST API (the same API the Moodle mobile app uses) to pull courses, course materials (files are downloaded to `data/moodle/files/<course_id>/` with text extracted), deadlines, assignments + submission status, quizzes, grades, forum announcements, and a change feed (`moodle_changes`) that powers the `study-digest` job and the `moodle-*` hum harvesters. Auth is `MOODLE_URL` + `MOODLE_TOKEN` (or username/password) from `.env`. It cannot submit, post, or modify anything. Setup: `docs/integrations/moodle.md`.
 
 When you add a new CLI under `bin/`, it shows up in the agent's tool list automatically. There's nothing to register.
 
@@ -275,6 +278,8 @@ agent/                 the kernel
   config/              agents.json + schema + loader
   dispatch-bridge/     server-to-server dispatch channel
   gmail-channel/       opt-in Gmail Pub/Sub ingress
+  whatsapp-channel/    opt-in WhatsApp ingress/egress (linked device, Baileys) + reply MCP
+  moodle-mcp/          read-only Moodle MCP server (courses, files, deadlines, grades)
   phone-channel/       opt-in companion-app realtime ingress
   webhook-channel/     opt-in HTTP webhook ingress
   scripts/             watchdog, gmail setup/renew, log rotation, hum harness + harvesters
@@ -356,7 +361,10 @@ You're starting with a working kernel and a small reference set, not a turnkey a
 
 ## Recent changes
 
-- **2026-10 · Moodle lecture recordings.** New job `moodle-recordings` (playbook `agent/ops-agent/jobs/moodle-recordings.md`, trigger `agent/scripts/trigger-moodle-recordings.sh`, CLIs `bin/moodle-recordings` + `bin/lecture-transcribe`, libs `lib/moodle-browser.mjs` + `lib/lecture-highlights.mjs`). First shipping job that uses browser automation: Playwright attaches to the automation Chrome on CDP :9222 to reuse the user's Moodle SSO session. State in `data/moodle-recordings-state.json`, per-recording files in `data/moodle-recordings/<id>/`, config in `data/moodle-config.json`. Supervisor changes: `moodle-recordings` dispatches coalesce like `hum` (`COALESCED_JOBS` in `agent/supervisor/http-server.mjs`) and get a 20-min turn watchdog (`agent/supervisor/index.mjs`).
+- **2026-10-24 — Moodle integration.** Added `agent/moodle-mcp/` (read-only Moodle Web Services MCP server, 12 `moodle_*` tools), registered in `agent/supervisor/mcp-config.json` + `chat-mcp-config.json` and allowlisted as `mcp__moodle__*` in `agent/config/agents.json`. Token helper `bin/moodle-token`. Guide: `docs/integrations/moodle.md`. First step toward customizing Merlin as a study assistant.
+- **2026-10-24 — Study assistant on Moodle.** `moodle_changes` tool (`agent/moodle-mcp/changes.mjs`) diffs a snapshot of active courses against per-cursor state in `data/moodle/state-<cursor>.json`. New `study-digest` job (`jobs/study-digest.md`, 20:00 daily, registered in `system/tasks.json`); morning-digest gains a COURSEWORK section; hum harvesters `moodle-deadlines` + `moodle-updates` (opt-in via `data/hum-interests.json`); chat-agent § Study Help (material-grounded answers, quizzing, homework-integrity rule). `moodle_grades` degrades gracefully on sites that hide the grade report.
+- **2026-10-24 — WhatsApp channel.** `agent/whatsapp-channel/daemon.mjs` (process-manager child, started only when `WHATSAPP_OWNER` is set) holds one WhatsApp Web linked-device connection via Baileys. Owner messages → chat-supervisor `POST :9094/dispatch` (source `whatsapp`, priority high; images/documents saved to `data/whatsapp/media/`). Egress through its localhost API `:9097/send`, used by the stateless `whatsapp` MCP server (`mcp__whatsapp__reply`, loaded by both agents), `bin/whatsapp-send` (jobs/scripts), and the chat-supervisor orphaned-text safety net (now source-aware). Supports a dedicated number or WhatsApp "Message yourself" self-chat. Auth state in `data/whatsapp-auth/`. Unofficial client — ToS/ban risk documented in `docs/integrations/whatsapp.md`. Alternative to the companion app for users without an Apple developer setup.
+- **2026-10-24 — Moodle lecture recordings.** New job `moodle-recordings` (playbook `agent/ops-agent/jobs/moodle-recordings.md`, trigger `agent/scripts/trigger-moodle-recordings.sh`, CLIs `bin/moodle-recordings` + `bin/lecture-transcribe`, libs `lib/moodle-browser.mjs` + `lib/lecture-highlights.mjs`). Recordings aren't reachable through the Moodle MCP (they sit in Kaltura/Panopto/Zoom players behind the web session), so this is the first shipping job that uses browser automation: Playwright attaches to the automation Chrome on CDP :9222 to reuse the user's Moodle session. Playback/download only. State in `data/moodle-recordings-state.json`, per-recording files in `data/moodle-recordings/<id>/`, config in `data/moodle-config.json`. Supervisor changes: `moodle-recordings` dispatches coalesce like `hum` (`COALESCED_JOBS` in `agent/supervisor/http-server.mjs`) and get a 20-min turn watchdog (`agent/supervisor/index.mjs`).
 
 ---
 

@@ -39,7 +39,7 @@ The README's prereqs list is the minimum. This is the complete map: required vs 
 - **Chrome with CDP on :9222** (the automation profile, logged in to your Moodle) + `playwright-core` (`cd bin && npm install`)
 - **ffmpeg** (downloads HLS/MP4 audio with the browser's cookies)
 - **Python 3 + `pip install faster-whisper`** for local Hebrew transcription. The default model (`ivrit-ai/whisper-large-v3-turbo-ct2`, ~1.6 GB) downloads from Hugging Face on first run. Skippable when your Moodle's player exposes Hebrew captions.
-- See [`docs/integrations/moodle.md`](integrations/moodle.md)
+- See [`docs/integrations/moodle-recordings.md`](integrations/moodle-recordings.md)
 
 ### Phone-channel (companion iOS/macOS app)
 
@@ -110,6 +110,7 @@ If you're putting Merlin on a dedicated machine (Mac mini, Intel NUC, Raspberry 
 | `gh` | Some Merlin scripts use `gh` to inspect runs/issues; without it those features short-circuit silently. |
 | `op` (1Password CLI) | Lets you reference secrets via `op://Vault/Item/field` instead of plaintext in `.env`. See [`docs/hardening.md`](hardening.md). |
 | Chrome + chrome-devtools-mcp | Agent-driven browser automation. Used by the `moodle-recordings` job (scanner over CDP, plus the agent's fallback for unknown video players); otherwise opt-in for your own jobs. |
+| `pdftotext` (poppler) | Lets `moodle_get_file` return the text of lecture PDFs (`brew install poppler` / `apt install poppler-utils`). Without it the PDF is still saved locally, just not extracted. |
 | Python 3 | Spotter's `ci/distribute_external.py` uses Python. Not needed if you're not building the iOS apps. |
 
 ## Hardware notes
