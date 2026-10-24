@@ -27,7 +27,7 @@ cd ~/Dev/merlin
 
 What the bootstrap does:
 
-- Verifies Node 22.5+ / npm / Ollama / optional tools (`claude`, `gh`, `op`, `gog`, `jq`).
+- Verifies Node 22.5+ / npm / Ollama / optional tools (`claude`, `gh`, `op`, `jq`).
 - Runs `npm install` in every subpackage (root, agent, supervisor, tools-mcp, the 4 channels, bin).
 - Creates the runtime directories: `data/`, `logs/`, `agent/logs/`, `agent/supervisor/state/{ops,chat}/`, `secrets/`, `credentials/`.
 - Marks every CLI in `bin/`, `agent/bin/`, `agent/scripts/`, and `scripts/` executable.

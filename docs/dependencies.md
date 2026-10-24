@@ -47,17 +47,11 @@ The README's prereqs list is the minimum. This is the complete map: required vs 
 - APNs auth key + Apple Developer account (for push notifications)
 - See [`docs/integrations/supabase.md`](integrations/supabase.md) and [`apps/companion/CODE-SIGNING.md`](../apps/companion/CODE-SIGNING.md)
 
-### Google Calendar / Tasks / Contacts inside agent tools
+### Google Calendar / Tasks / Contacts
 
-The `agent/tools-mcp/index.mjs` exposes tools like `contacts_search` that shell out to a `gog` CLI. **This CLI doesn't ship with Merlin.** It's a contract — the upstream gandalf source provided a personal `gog` binary; the public Merlin tree expects you to bring your own.
-
-Three paths:
-
-1. **Use the official Google MCP servers** (`@modelcontextprotocol/server-google-*` or similar). Wire them into `agent/supervisor/mcp-config.json` instead of relying on `gog`. Cleanest path for new adopters.
-2. **Write a minimal `gog` shim** that matches the call shape the playbooks use: `gog calendar list [--results-only] [--from ISO] [--to ISO]`, `gog tasks list @default`, `gog contacts search <query>`. Drop it in `bin/`. The contract is whatever the playbooks happen to call; see grep `\bgog\b` for the exact invocations.
-3. **Disable the affected playbooks.** The reference jobs that lean on `gog` are `morning-digest` and several hum harvesters. Replace or remove them; the rest of the kernel works without `gog`.
-
-If you go path #1, please consider opening a PR documenting which official MCP server you used + how you wired it — it would help everyone after you.
+- **Agents' calendar:** the Google Calendar connector on your Claude account (claude.ai → Settings → Connectors).
+- **Harvesters, hum busy gate, watchdog, `tasks_*` / `contacts_*` tools:** a Google Cloud OAuth client (Desktop type) with the Calendar, Tasks and People APIs enabled, plus a refresh token from `bin/google auth` in `.env`. No extra binaries; `lib/google-api.mjs` calls the REST APIs with `fetch`.
+- See [`docs/integrations/google.md`](integrations/google.md)
 
 ### iOS/macOS companion app builds
 

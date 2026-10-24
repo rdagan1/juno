@@ -9,7 +9,7 @@ Before starting, run `merlin doctor` to confirm the system is consistent. **Do N
 - List each event with time and title. If none, write "No events today".
 
 ### 2. Tasks
-- `gog tasks list @default --plain`. Highlight overdue and due-today.
+- `tasks_list` tool (default list). Highlight overdue and due-today. If it errors (Google not configured), write "Tasks unavailable" and move on.
 
 ### 2b. Coursework (skip silently if the `moodle` MCP server isn't configured)
 - `moodle_upcoming(days=2, overdue_days=1)` — list items due today and tomorrow with course and time. Mark overdue ones.

@@ -68,7 +68,7 @@ Use `${MERLIN_HOME}/bin/gmail-action` for all Gmail modifications:
 - **P2 emails:** `gmail-action label <messageId> <label>` then `star <messageId>` then `mark-read <messageId>`. **Do NOT create draft replies.**
 - **P1 emails:** `gmail-action label <messageId> <label>` then `star <messageId>` then `label <messageId> p1`. **Do NOT mark-read** — P1 emails stay unread so the user sees them. Additionally:
   1. Notify the user: `merlin-send-curl "🚨 P1 Email: [Subject] from [Sender]"`
-  2. Create a task in Google Tasks: `gog tasks add @default --title "[Subject] from [Sender] — [action]" --due YYYY-MM-DD --notes "[context]" --no-input`
+  2. Create a task in Google Tasks with the `tasks_add` tool: title `"[Subject] from [Sender] — [action]"`, `due` YYYY-MM-DD, `notes` "[context]".
 
 ### Timezone Rule for All Due Dates
 
@@ -92,7 +92,7 @@ This pattern is how you turn high-volume vendor noise (status-page emails, payme
 
 ### Calendar event creation and updates — run through `calendar-scheduling`
 
-**Any time this agent creates or updates a calendar event** — from a meeting invite in triage, a reschedule, a ticket-purchase confirmation, a cancellation, or any webhook-dispatched task that touches the calendar — **invoke the `calendar-scheduling` skill first**, then call the Google Calendar MCP / `gog calendar create|update`. The skill encodes: busy/free transparency rules, event sizing, pacing/don't-pack rule, events-vs-tasks heuristic, timezone discipline, color conventions, reminder defaults, and `--send-updates all` when attendees are present.
+**Any time this agent creates or updates a calendar event** — from a meeting invite in triage, a reschedule, a ticket-purchase confirmation, a cancellation, or any webhook-dispatched task that touches the calendar — **invoke the `calendar-scheduling` skill first**, then call the Google Calendar connector (`mcp__claude_ai_Google_Calendar__*`). The skill encodes: busy/free transparency rules, event sizing, pacing/don't-pack rule, events-vs-tasks heuristic, timezone discipline, color conventions, reminder defaults, and `--send-updates all` when attendees are present.
 
 ### Meeting Cancellation Emails
 

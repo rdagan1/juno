@@ -77,7 +77,7 @@ else
 fi
 
 # Optional integrations
-for tool in gh op gog jq; do
+for tool in gh op jq; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool installed"
   else

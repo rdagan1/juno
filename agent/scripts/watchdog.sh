@@ -800,24 +800,25 @@ if [ -r "$GMAIL_WATCH_LAST" ]; then
   fi
 fi
 
-# --- gog CLI auth health ---
-# Google Tasks/Calendar/etc. OAuth refresh tokens can be revoked by Google
-# (rotation, inactivity, password change). Alert at most once per 24h.
-GOG_BIN=gog
-GOG_ALERT_COOLDOWN="${MERLIN_HOME}/data/.gog-auth-last-alert"
-if [ -x "$GOG_BIN" ]; then
-  GOG_ERR=$("$GOG_BIN" tasks list @default --limit 1 2>&1 >/dev/null)
-  if echo "$GOG_ERR" | grep -qiE "invalid_grant|expired|revoked|unauthorized"; then
-    ISSUES="$ISSUES gog-auth(invalid)"
+# --- Google OAuth health (bin/google) ---
+# The refresh token behind the calendar/tasks harvesters and the tasks/contacts
+# tools can be revoked by Google (password change, inactivity, unverified-app
+# 7-day expiry). `google check` exits 3 when the token is rejected; any other
+# failure (not configured, network) is ignored here. Alert at most once per 24h.
+GOOGLE_ALERT_COOLDOWN="${MERLIN_HOME}/data/.google-auth-last-alert"
+if grep -q '^GOOGLE_OAUTH_REFRESH_TOKEN=.' "${MERLIN_HOME}/.env" 2>/dev/null; then
+  GOOGLE_ERR=$(node "${MERLIN_HOME}/bin/google" check 2>&1 >/dev/null)
+  if [ $? -eq 3 ]; then
+    ISSUES="$ISSUES google-auth(invalid)"
     SHOULD_ALERT=1
-    if [ -f "$GOG_ALERT_COOLDOWN" ]; then
-      AGE=$(( $(date +%s) - $(stat -f%m "$GOG_ALERT_COOLDOWN") ))
+    if [ -f "$GOOGLE_ALERT_COOLDOWN" ]; then
+      AGE=$(( $(date +%s) - $(stat -f%m "$GOOGLE_ALERT_COOLDOWN") ))
       [ "$AGE" -lt 86400 ] && SHOULD_ALERT=0
     fi
     if [ "$SHOULD_ALERT" -eq 1 ]; then
-      log "gog auth failed: $(echo "$GOG_ERR" | head -c 200)"
-      notify "⚠️ gog CLI auth is broken (Google refresh token revoked/expired). Run: gog auth add ${MERLIN_OWNER_EMAIL}"
-      touch "$GOG_ALERT_COOLDOWN"
+      log "google auth failed: $(echo "$GOOGLE_ERR" | head -c 200)"
+      notify "⚠️ Google auth is broken (refresh token revoked/expired). Run: bin/google auth, then update .env (docs/integrations/google.md)"
+      touch "$GOOGLE_ALERT_COOLDOWN"
     fi
   fi
 fi

@@ -32,7 +32,7 @@ You are a fast-response chat agent running under the chat-supervisor on a long-l
 
 ## Calendar event creation and updates
 
-When the user asks to place, move, shorten, or delete something on their calendar ("put X at 3pm Tuesday", "move the Friday meeting to 4pm", "block tomorrow morning for writing"), **invoke the `calendar-scheduling` skill first**, then call `gog calendar create|update` or the Google Calendar MCP. The skill encodes: busy/free transparency rules, partner-event conventions (`transparency: free` for events that don't block the owner's time), pacing and sizing rules, ET timezone discipline, color / reminder defaults. Scheduling without it regularly produces conflicts.
+When the user asks to place, move, shorten, or delete something on their calendar ("put X at 3pm Tuesday", "move the Friday meeting to 4pm", "block tomorrow morning for writing"), **invoke the `calendar-scheduling` skill first**, then call the Google Calendar connector (`mcp__claude_ai_Google_Calendar__*`). The skill encodes: busy/free transparency rules, partner-event conventions (`transparency: free` for events that don't block the owner's time), pacing and sizing rules, ET timezone discipline, color / reminder defaults. Scheduling without it regularly produces conflicts.
 
 ---
 
