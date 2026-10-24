@@ -1,0 +1,551 @@
+#!/usr/bin/env node
+// moodle-recordings — detect new lecture recordings on Moodle, transcribe
+// them locally (Hebrew-first), and produce an exam-aware digest.
+//
+// Moodle is reached through browser automation, not an API/MCP: we attach to
+// the automation Chrome on CDP :9222 (the same profile chrome-devtools MCP
+// uses) where the user is already logged in. See lib/moodle-browser.mjs.
+//
+// Pipeline per recording (status in data/moodle-recordings-state.json):
+//   new → fetched (audio or captions saved) → transcribed → digested → delivered
+//   side exits: no_media (player not recognised; ops-agent falls back to
+//   driving the browser itself), failed (3 attempts), skipped, baseline
+//   (existed before the first scan; never processed unless backfilled).
+//
+// Heavy work (download, Whisper, Claude summary) happens HERE, from cron via
+// agent/scripts/trigger-moodle-recordings.sh, not inside an agent turn. The
+// ops-agent is dispatched only to deliver digests and handle exceptions; see
+// agent/ops-agent/jobs/moodle-recordings.md.
+//
+// Usage:
+//   moodle-recordings run [--max N] [--no-scan] [--json]   scan + process pending, prints dispatch decision
+//   moodle-recordings scan [--backfill N] [--json]         detect new recordings only
+//   moodle-recordings list [--status S[,S]] [--json]
+//   moodle-recordings show <id>                            item + digest paths
+//   moodle-recordings process <id>                         fetch → transcribe → digest one item
+//   moodle-recordings fetch|transcribe|digest <id>         single pipeline step
+//   moodle-recordings set-media <id> <media-url>           manual media URL (from agent browser fallback); requeues
+//   moodle-recordings mark <id> <status> [--note TEXT]     e.g. delivered, skipped, no_media
+//   moodle-recordings alert [--ack]                        show / acknowledge the "log in to Moodle" alert
+//   moodle-recordings courses                              list courses visible in the browser session
+//
+// Exit codes: 0 ok · 1 nothing to do / not found · 2 usage · 3 Moodle login
+// required · 4 pipeline step failed · 5 Chrome CDP unreachable · 6 locked
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+import {
+  AuthRequiredError, CdpUnavailableError, DEFAULTS,
+  connect, scanCourses, sniffMedia, headersFor, discoverCourses,
+} from "../lib/moodle-browser.mjs";
+import {
+  scanHighlights, segmentsToText, parseCaptions, hebrewRatio, chunkTranscript,
+  buildDigestPrompt, buildMergePrompt, extractJson, finalizeDigest, renderDigestHtml,
+} from "../lib/lecture-highlights.mjs";
+
+const BIN_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MERLIN_HOME = process.env.MERLIN_HOME || path.join(os.homedir(), "Dev/merlin");
+const DATA_DIR = process.env.MOODLE_RECORDINGS_DATA || path.join(MERLIN_HOME, "data");
+const CONFIG_PATH = process.env.MOODLE_RECORDINGS_CONFIG || path.join(DATA_DIR, "moodle-config.json");
+const STATE_PATH = path.join(DATA_DIR, "moodle-recordings-state.json");
+const ALERT_PATH = path.join(DATA_DIR, "moodle-recordings-alert.json");
+const WORK_ROOT = path.join(DATA_DIR, "moodle-recordings");
+const LOCK_DIR = path.join(DATA_DIR, "moodle-recordings.lock");
+const MAX_ATTEMPTS = 3;
+const PENDING = ["new", "fetched", "transcribed"];
+
+const args = process.argv.slice(2);
+const cmd = args.shift();
+function flag(name, hasValue = true) {
+  const i = args.indexOf(name);
+  if (i < 0) return undefined;
+  if (!hasValue) { args.splice(i, 1); return true; }
+  const v = args[i + 1];
+  args.splice(i, 2);
+  return v;
+}
+const asJson = flag("--json", false);
+function log(...m) { console.error("[moodle-recordings]", ...m); }
+function die(msg, code = 2) { console.error(`moodle-recordings: ${msg}`); process.exit(code); }
+
+// ── config + state ────────────────────────────────────────────────────────
+
+function loadConfig() {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); }
+  catch (e) { die(`config not readable at ${CONFIG_PATH} (copy examples/moodle-config.example.json): ${e.message}`); }
+  if (!raw.base_url) die(`config ${CONFIG_PATH} needs "base_url"`);
+  return {
+    ...DEFAULTS,
+    summary_language: "he",
+    transcript_language: "he",
+    prefer_captions: true,
+    ...raw,
+    transcribe: { ...(raw.transcribe || {}) },
+    summarizer: { model: "sonnet", effort: "medium", chunk_chars: 120000, ...(raw.summarizer || {}) },
+  };
+}
+
+function loadState() {
+  try { return JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); }
+  catch { return { bootstrapped_at: null, last_scan_at: null, items: {} }; }
+}
+
+function saveState(state) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = `${STATE_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+  fs.renameSync(tmp, STATE_PATH);
+}
+
+function update(state, id, patch) {
+  state.items[id] = { ...state.items[id], ...patch, updated_at: new Date().toISOString() };
+  saveState(state);
+  return state.items[id];
+}
+
+function getItem(state, id) {
+  const it = state.items[id];
+  if (!it) die(`unknown id: ${id}`, 1);
+  return it;
+}
+
+function workDir(id) {
+  const d = path.join(WORK_ROOT, id.replace(/[^A-Za-z0-9._-]+/g, "_"));
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+function writeAlert(kind, detail) {
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(ALERT_PATH, "utf8")); } catch {}
+  if (prev && prev.kind === kind) return; // keep original since/notified_at
+  fs.writeFileSync(ALERT_PATH, JSON.stringify({ kind, since: new Date().toISOString(), detail, notified_at: null }, null, 2) + "\n");
+}
+function clearAlert() { try { fs.unlinkSync(ALERT_PATH); } catch {} }
+function readAlert() { try { return JSON.parse(fs.readFileSync(ALERT_PATH, "utf8")); } catch { return null; } }
+
+function acquireLock() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(LOCK_DIR);
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+    let pid = 0;
+    try { pid = Number(fs.readFileSync(path.join(LOCK_DIR, "pid"), "utf8")); } catch {}
+    let alive = false;
+    if (pid) { try { process.kill(pid, 0); alive = true; } catch {} }
+    if (alive) return false;
+    fs.rmSync(LOCK_DIR, { recursive: true, force: true });
+    fs.mkdirSync(LOCK_DIR);
+  }
+  fs.writeFileSync(path.join(LOCK_DIR, "pid"), String(process.pid));
+  const release = () => { try { fs.rmSync(LOCK_DIR, { recursive: true, force: true }); } catch {} };
+  process.on("exit", release);
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { release(); process.exit(130); });
+  return true;
+}
+
+// ── browser ───────────────────────────────────────────────────────────────
+
+function loadChromium() {
+  const require = createRequire(import.meta.url);
+  for (const mod of ["playwright-core", "playwright"]) {
+    try { return require(mod).chromium; } catch {}
+  }
+  die("playwright-core not installed (cd bin && npm install)", 2);
+}
+
+async function withBrowser(cfg, fn) {
+  const { browser, context } = await connect(loadChromium(), cfg);
+  try { return await fn(context); }
+  finally {
+    // connectOverCDP: close() only detaches; the user's Chrome keeps running.
+    await browser.close().catch(() => {});
+  }
+}
+
+// ── pipeline steps ────────────────────────────────────────────────────────
+
+function ffmpegHeaders(headers) {
+  return Object.entries(headers).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}\r\n`).join("");
+}
+
+function downloadAudio(mediaUrl, headers, outFile) {
+  const r = spawnSync("ffmpeg", [
+    "-nostdin", "-y", "-loglevel", "error",
+    "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
+    "-headers", ffmpegHeaders(headers),
+    "-i", mediaUrl,
+    "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k",
+    outFile,
+  ], { encoding: "utf8", timeout: 90 * 60 * 1000 });
+  if (r.error) return { ok: false, error: r.error.message };
+  if (r.status !== 0) return { ok: false, error: (r.stderr || "").trim().slice(-500) || `ffmpeg exit ${r.status}` };
+  const probe = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", outFile], { encoding: "utf8" });
+  const duration = Number((probe.stdout || "").trim());
+  if (!(duration > 60)) return { ok: false, error: `audio too short (${duration || 0}s), likely a preview/ad` };
+  return { ok: true, duration };
+}
+
+function writeTranscript(dir, segments, meta) {
+  fs.writeFileSync(path.join(dir, "transcript.json"), JSON.stringify({ ...meta, segments }, null, 1));
+  fs.writeFileSync(path.join(dir, "transcript.txt"), segmentsToText(segments) + "\n");
+}
+
+async function stepFetch(state, cfg, id, context) {
+  const item = state.items[id];
+  const dir = workDir(id);
+  const audio = path.join(dir, "audio.m4a");
+
+  if (item.media_url) {
+    const headers = await headersFor(context, item.media_url, item.url);
+    const r = downloadAudio(item.media_url, headers, audio);
+    if (!r.ok) throw new Error(`manual media download failed: ${r.error}`);
+    return update(state, id, { status: "fetched", audio, duration: r.duration, fetched_from: "manual" });
+  }
+
+  const sniff = await sniffMedia(context, item.url, cfg, log);
+  fs.writeFileSync(path.join(dir, "sniff.json"), JSON.stringify({
+    page_url: sniff.page_url, media: sniff.media, captions: sniff.captions.map((c) => c.url),
+  }, null, 2));
+
+  // Platform captions in the lecture's language are free and instant; take
+  // them over a 20-minute Whisper run when they look like a real transcript.
+  if (cfg.prefer_captions) {
+    for (const cap of sniff.captions) {
+      const segs = parseCaptions(cap.text);
+      const text = segs.map((s) => s.text).join(" ");
+      const langOk = cfg.transcript_language === "he" ? hebrewRatio(text) > 0.5 : hebrewRatio(text) < 0.2;
+      if (segs.length >= 30 && langOk) {
+        writeTranscript(dir, segs, { language: cfg.transcript_language, source: "captions", caption_url: cap.url });
+        return update(state, id, { status: "transcribed", fetched_from: "captions" });
+      }
+    }
+  }
+
+  const errors = [];
+  for (const m of sniff.media.slice(0, 4)) {
+    log(`downloading ${m.kind} ${m.url.slice(0, 120)}`);
+    const r = downloadAudio(m.url, sniff.headers, audio);
+    if (r.ok) return update(state, id, { status: "fetched", audio, duration: r.duration, fetched_from: m.kind });
+    errors.push(r.error);
+  }
+  return update(state, id, {
+    status: "no_media",
+    escalated_at: null,
+    last_error: sniff.media.length ? `downloads failed: ${errors.join(" | ").slice(0, 600)}` : "no media URL detected on the page",
+  });
+}
+
+function stepTranscribe(state, cfg, id) {
+  const item = state.items[id];
+  const dir = workDir(id);
+  const t = cfg.transcribe;
+  const argv = [path.join(BIN_DIR, "lecture-transcribe"), item.audio, "--out", dir, "--language", cfg.transcript_language];
+  if (t.model) argv.push("--model", t.model);
+  if (t.device) argv.push("--device", t.device);
+  if (t.compute_type) argv.push("--compute-type", t.compute_type);
+  log(`transcribing ${id} (${Math.round((item.duration || 0) / 60)} min audio)`);
+  const r = spawnSync(t.python || "python3", argv, { encoding: "utf8", timeout: 4 * 60 * 60 * 1000, stdio: ["ignore", "pipe", "inherit"] });
+  if (r.status !== 0) throw new Error(`lecture-transcribe exit ${r.status ?? r.error?.message}`);
+  if (!cfg.keep_audio) { try { fs.unlinkSync(item.audio); } catch {} }
+  return update(state, id, { status: "transcribed" });
+}
+
+function callClaude(prompt, cfg) {
+  const bin = process.env.MERLIN_CLAUDE_BIN || "claude";
+  const argv = ["-p", "--model", cfg.summarizer.model, "--output-format", "json"];
+  if (cfg.summarizer.effort) argv.push("--effort", cfg.summarizer.effort);
+  const r = spawnSync(bin, argv, { input: prompt, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 20 * 60 * 1000 });
+  if (r.error) throw new Error(`claude: ${r.error.message}`);
+  if (r.status !== 0) throw new Error(`claude exit ${r.status}: ${(r.stderr || r.stdout || "").slice(-400)}`);
+  let text = r.stdout;
+  try {
+    const env = JSON.parse(r.stdout);
+    if (env.is_error) throw new Error(`claude error: ${String(env.result).slice(0, 300)}`);
+    text = env.result ?? r.stdout;
+  } catch (e) {
+    if (String(e.message).startsWith("claude error")) throw e;
+  }
+  return extractJson(text);
+}
+
+function chunkStart(chunk) {
+  const m = chunk.match(/^\[(\d+):(\d+):(\d+)\]/);
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
+}
+
+function stepDigest(state, cfg, id) {
+  const item = state.items[id];
+  const dir = workDir(id);
+  const transcript = JSON.parse(fs.readFileSync(path.join(dir, "transcript.json"), "utf8"));
+  const segments = transcript.segments || [];
+  if (segments.length < 5) throw new Error(`transcript too short (${segments.length} segments)`);
+  const candidates = scanHighlights(segments);
+  const text = segmentsToText(segments);
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: cfg.timezone || "Asia/Jerusalem" });
+  const base = { course: item.course, name: item.name, recordedAt: item.date_text || item.first_seen?.slice(0, 10), language: cfg.summary_language, today };
+
+  const chunks = chunkTranscript(text, cfg.summarizer.chunk_chars);
+  let raw;
+  if (chunks.length === 1) {
+    raw = callClaude(buildDigestPrompt({ ...base, transcript: text, candidates }), cfg);
+  } else {
+    const partials = chunks.map((chunk, i) => {
+      log(`summarizing part ${i + 1}/${chunks.length}`);
+      const first = i === 0 ? 0 : chunkStart(chunk);
+      const next = i + 1 < chunks.length ? chunkStart(chunks[i + 1]) : Infinity;
+      const partCands = candidates.filter((c) => c.start >= first && c.start < next);
+      return callClaude(buildDigestPrompt({ ...base, transcript: chunk, candidates: partCands, part: { index: i + 1, total: chunks.length } }), cfg);
+    });
+    raw = callClaude(buildMergePrompt({ ...base, partials }), cfg);
+  }
+  const digest = finalizeDigest(raw, candidates);
+  const html = renderDigestHtml({ digest, course: item.course, name: item.name, url: item.url, recordedAt: base.recordedAt, language: cfg.summary_language });
+  const examTag = { he: "[מבחן] ", en: "[EXAM] " }[cfg.summary_language] || "[EXAM] ";
+  const subject = `${digest.exam_relevance === "high" ? examTag : ""}${item.course}: ${digest.title || item.name}`.replace(/—/g, "-").slice(0, 160);
+  fs.writeFileSync(path.join(dir, "candidates.json"), JSON.stringify(candidates, null, 1));
+  fs.writeFileSync(path.join(dir, "digest.json"), JSON.stringify({ ...digest, email_subject: subject, course: item.course, name: item.name, url: item.url }, null, 2));
+  fs.writeFileSync(path.join(dir, "digest.html"), html);
+  return update(state, id, {
+    status: "digested",
+    exam_relevance: digest.exam_relevance,
+    digest_json: path.join(dir, "digest.json"),
+    digest_html: path.join(dir, "digest.html"),
+    email_subject: subject,
+    last_error: null,
+  });
+}
+
+/** Advance one item as far as it goes. Returns final status. */
+async function processItem(state, cfg, id, getContext) {
+  for (let guard = 0; guard < 4; guard++) {
+    const item = state.items[id];
+    try {
+      if (item.status === "new") await stepFetch(state, cfg, id, await getContext());
+      else if (item.status === "fetched") stepTranscribe(state, cfg, id);
+      else if (item.status === "transcribed") stepDigest(state, cfg, id);
+      else return item.status;
+    } catch (e) {
+      if (e instanceof AuthRequiredError || e instanceof CdpUnavailableError) throw e;
+      const attempts = (item.attempts || 0) + 1;
+      log(`${id}: ${item.status} step failed (attempt ${attempts}): ${e.message}`);
+      update(state, id, { attempts, last_error: e.message.slice(0, 800), ...(attempts >= MAX_ATTEMPTS ? { status: "failed", failed_at_step: item.status, escalated_at: null } : {}) });
+      return state.items[id].status;
+    }
+  }
+  return state.items[id].status;
+}
+
+// ── scan ──────────────────────────────────────────────────────────────────
+
+function mergeScan(state, found, { backfill = 0 } = {}) {
+  const now = new Date().toISOString();
+  const bootstrapping = !state.bootstrapped_at;
+  const fresh = [];
+  const byCourse = new Map();
+  for (const f of found) {
+    if (!byCourse.has(f.course_id)) byCourse.set(f.course_id, []);
+    byCourse.get(f.course_id).push(f);
+  }
+  // Moodle lists activities in course order (oldest first), so the last N per
+  // course are the most recent.
+  const backfillIds = new Set();
+  if (backfill > 0) for (const list of byCourse.values()) list.slice(-backfill).forEach((f) => backfillIds.add(f.id));
+  for (const f of found) {
+    const prev = state.items[f.id];
+    if (prev) {
+      state.items[f.id] = { ...prev, name: f.name, url: f.url, course: f.course, section: f.section, date_text: f.date_text || prev.date_text, last_seen: now };
+      continue;
+    }
+    const status = bootstrapping && !backfillIds.has(f.id) ? "baseline" : "new";
+    state.items[f.id] = { ...f, first_seen: now, last_seen: now, status, attempts: 0, updated_at: now };
+    if (status === "new") fresh.push(f.id);
+  }
+  if (bootstrapping) state.bootstrapped_at = now;
+  state.last_scan_at = now;
+  saveState(state);
+  return { fresh, bootstrapped: bootstrapping };
+}
+
+async function doScan(state, cfg, context, backfill) {
+  const found = await scanCourses(context, cfg, log);
+  clearAlert();
+  const r = mergeScan(state, found, { backfill });
+  return { found: found.length, ...r };
+}
+
+function handleFatal(e) {
+  if (e instanceof AuthRequiredError) {
+    writeAlert("auth_required", { url: e.url });
+    return 3;
+  }
+  if (e instanceof CdpUnavailableError) return 5;
+  throw e;
+}
+
+function needsAttention(state) {
+  const items = Object.values(state.items);
+  const alert = readAlert();
+  return {
+    ready: items.filter((i) => i.status === "digested").map((i) => i.id),
+    no_media: items.filter((i) => i.status === "no_media" && !i.escalated_at).map((i) => i.id),
+    failed: items.filter((i) => i.status === "failed" && !i.escalated_at).map((i) => i.id),
+    auth_required: !!(alert && alert.kind === "auth_required" && !alert.notified_at),
+  };
+}
+
+function print(obj, human) {
+  if (asJson) console.log(JSON.stringify(obj, null, 2));
+  else console.log(human ?? JSON.stringify(obj, null, 2));
+}
+
+// ── commands ──────────────────────────────────────────────────────────────
+
+async function main() {
+  switch (cmd) {
+    case "run": {
+      const max = Number(flag("--max") ?? 3);
+      const noScan = flag("--no-scan", false);
+      const cfg = loadConfig();
+      if (!acquireLock()) { log("another run holds the lock"); process.exit(6); }
+      const state = loadState();
+      let session = null;
+      const getContext = async () => (session ||= await connect(loadChromium(), cfg)).context;
+      const result = { scanned: false, new: [], processed: [], cdp_down: false };
+      try {
+        if (!noScan) {
+          const s = await doScan(state, cfg, await getContext(), 0);
+          Object.assign(result, { scanned: true, found: s.found, new: s.fresh, bootstrapped: s.bootstrapped });
+        }
+        const pending = Object.values(state.items)
+          .filter((i) => PENDING.includes(i.status) && (i.attempts || 0) < MAX_ATTEMPTS)
+          .sort((a, b) => String(a.first_seen).localeCompare(String(b.first_seen)))
+          .slice(0, max);
+        for (const it of pending) result.processed.push({ id: it.id, status: await processItem(state, cfg, it.id, getContext) });
+      } catch (e) {
+        const code = handleFatal(e);
+        if (code === 5) result.cdp_down = true;
+        log(e.message);
+      } finally {
+        if (session) await session.browser.close().catch(() => {});
+      }
+      const att = needsAttention(state);
+      Object.assign(result, att, { dispatch: !!(att.ready.length || att.no_media.length || att.failed.length || att.auth_required) });
+      print(result, `new=${result.new.length} processed=${result.processed.length} ready=${att.ready.length} no_media=${att.no_media.length} auth_required=${att.auth_required} dispatch=${result.dispatch}`);
+      return;
+    }
+    case "scan": {
+      const backfill = Number(flag("--backfill") ?? 0);
+      const cfg = loadConfig();
+      const state = loadState();
+      try {
+        const r = await withBrowser(cfg, (ctx) => doScan(state, cfg, ctx, backfill));
+        print({ ...r, items: r.fresh.map((id) => state.items[id]) },
+          r.bootstrapped ? `bootstrap: ${r.found} existing recordings recorded as baseline, ${r.fresh.length} queued` : `${r.fresh.length} new of ${r.found}`);
+      } catch (e) { const code = handleFatal(e); log(e.message); process.exit(code); }
+      return;
+    }
+    case "courses": {
+      const cfg = loadConfig();
+      try { print(await withBrowser(cfg, (ctx) => discoverCourses(ctx, cfg))); }
+      catch (e) { const code = handleFatal(e); log(e.message); process.exit(code); }
+      return;
+    }
+    case "list": {
+      const statuses = flag("--status")?.split(",");
+      const state = loadState();
+      const items = Object.values(state.items).filter((i) => !statuses || statuses.includes(i.status));
+      print(items, items.map((i) => `${i.status.padEnd(11)} ${i.id}  ${i.course} · ${i.name}`).join("\n") || "(none)");
+      return;
+    }
+    case "show": {
+      const id = args[0] || die("usage: show <id>");
+      print(getItem(loadState(), id));
+      return;
+    }
+    case "process":
+    case "fetch":
+    case "transcribe":
+    case "digest": {
+      const id = args[0] || die(`usage: ${cmd} <id>`);
+      const cfg = loadConfig();
+      if (!acquireLock()) { log("another run holds the lock"); process.exit(6); }
+      const state = loadState();
+      const item = getItem(state, id);
+      const need = { fetch: "new", transcribe: "fetched", digest: "transcribed" }[cmd];
+      if (need && item.status !== need) {
+        // Allow explicit re-runs of a single step regardless of status.
+        update(state, id, { status: need, attempts: 0 });
+      }
+      let session = null;
+      const getContext = async () => (session ||= await connect(loadChromium(), cfg)).context;
+      try {
+        let status;
+        if (cmd === "process") {
+          if (!PENDING.includes(item.status)) update(state, id, { status: "new", attempts: 0 });
+          status = await processItem(state, cfg, id, getContext);
+        } else if (cmd === "fetch") status = (await stepFetch(state, cfg, id, await getContext())).status;
+        else if (cmd === "transcribe") status = stepTranscribe(state, cfg, id).status;
+        else status = stepDigest(state, cfg, id).status;
+        print(state.items[id], `${id}: ${status}`);
+        if (["failed", "no_media"].includes(status)) process.exit(4);
+      } catch (e) {
+        if (e instanceof AuthRequiredError || e instanceof CdpUnavailableError) { const code = handleFatal(e); log(e.message); process.exit(code); }
+        log(e.message);
+        process.exit(4);
+      } finally {
+        if (session) await session.browser.close().catch(() => {});
+      }
+      return;
+    }
+    case "set-media": {
+      const [id, url] = args;
+      if (!id || !/^https?:\/\//.test(url || "")) die("usage: set-media <id> <http(s)-media-url>");
+      const state = loadState();
+      getItem(state, id);
+      update(state, id, { media_url: url, status: "new", attempts: 0, last_error: null, escalated_at: null });
+      print(state.items[id], `${id}: media URL set, requeued`);
+      return;
+    }
+    case "mark": {
+      const [id, status] = args;
+      const note = flag("--note");
+      const allowed = ["new", "delivered", "skipped", "no_media", "failed", "baseline"];
+      if (!id || !allowed.includes(status)) die(`usage: mark <id> <${allowed.join("|")}> [--note TEXT]`);
+      const state = loadState();
+      getItem(state, id);
+      const now = new Date().toISOString();
+      update(state, id, {
+        status,
+        ...(note ? { note } : {}),
+        ...(status === "delivered" ? { delivered_at: now } : {}),
+        ...(["no_media", "failed"].includes(status) ? { escalated_at: now } : {}),
+        ...(status === "new" ? { attempts: 0, escalated_at: null } : {}),
+      });
+      print(state.items[id], `${id}: ${status}`);
+      return;
+    }
+    case "alert": {
+      const ack = flag("--ack", false);
+      const alert = readAlert();
+      if (!alert) { print({ alert: null }, "no alert"); process.exit(1); }
+      if (ack) {
+        alert.notified_at = new Date().toISOString();
+        fs.writeFileSync(ALERT_PATH, JSON.stringify(alert, null, 2) + "\n");
+      }
+      print(alert);
+      return;
+    }
+    default:
+      die("usage: moodle-recordings run|scan|courses|list|show|process|fetch|transcribe|digest|set-media|mark|alert  (see header of bin/moodle-recordings)");
+  }
+}
+
+main().catch((e) => { console.error(e?.stack || e); process.exit(4); });

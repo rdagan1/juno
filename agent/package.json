@@ -7,7 +7,8 @@
     "test": "node --test test/managed-process.test.mjs test/pty-wrap.test.mjs test/resilience.test.mjs",
     "test:leaks": "node --expose-gc --test test/resource-leak.test.mjs",
     "test:chaos": "node test/chaos-simulator.mjs",
-    "test:all": "npm test && npm run test:leaks"
+    "test:all": "npm test && npm run test:leaks",
+    "test:moodle": "node --test test/lecture-highlights.test.mjs test/moodle-recordings.test.mjs"
   },
   "keywords": [],
   "author": "",

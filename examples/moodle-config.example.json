@@ -1,0 +1,40 @@
+{
+  "_comment": "Copy to data/moodle-config.json. Used by bin/moodle-recordings (see docs/integrations/moodle.md). Only base_url is required; everything else has defaults.",
+
+  "base_url": "https://moodle.example.ac.il",
+  "cdp_url": "http://localhost:9222",
+  "timezone": "Asia/Jerusalem",
+
+  "auto_discover_courses": true,
+  "exclude_courses": [],
+  "courses": [
+    { "id": 12345, "name": "Linear Algebra 1" },
+    {
+      "id": 23456,
+      "name": "Data Structures",
+      "listings": [
+        { "url": "https://moodle.example.ac.il/mod/lti/view.php?id=777", "link_selector": "a[href*='Viewer.aspx?id=']" }
+      ]
+    }
+  ],
+
+  "recording_modules": ["kalvidres", "kalvidpres", "zoom", "videofile", "panopto", "videotime", "echo360", "url", "resource", "lti", "page"],
+  "name_patterns": ["הקלט", "הרצא", "שיעור", "תרגול", "סרטון", "וידאו", "זום", "recording", "lecture", "video", "zoom", "panopto", "kaltura"],
+  "login_url_patterns": ["/login/", "/auth/", "saml", "sso", "idp", "adfs", "login.microsoftonline.com"],
+
+  "transcript_language": "he",
+  "summary_language": "he",
+  "prefer_captions": true,
+  "keep_audio": false,
+
+  "transcribe": {
+    "model": "ivrit-ai/whisper-large-v3-turbo-ct2",
+    "device": "auto",
+    "compute_type": "int8"
+  },
+  "summarizer": {
+    "model": "sonnet",
+    "effort": "medium",
+    "chunk_chars": 120000
+  }
+}

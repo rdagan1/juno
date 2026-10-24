@@ -163,6 +163,7 @@ The registry of active jobs is `system/tasks.json` — each entry has a name, cr
 **Reference jobs ship:**
 - `agent/ops-agent/jobs/morning-digest.md` — daily summary of calendar/email/tasks, pushed to chat
 - `agent/ops-agent/jobs/hum.md` and `hum-{canary,daily,ideation,operations,review}.md` — the ambient-awareness loop (see § Hum)
+- `agent/ops-agent/jobs/moodle-recordings.md` — new Moodle lecture recordings → local Hebrew transcription → exam-aware digest email. Unusual shape: the heavy pipeline (`bin/moodle-recordings run`: browser scan over CDP, ffmpeg, faster-whisper, one-shot `claude -p`) runs inside the trigger script, and the agent is dispatched only to deliver and to handle exceptions (re-login alert, browser fallback for unknown video players). See [docs/integrations/moodle.md](../docs/integrations/moodle.md).
 
 You write your own from there.
 
@@ -350,6 +351,12 @@ A few patterns that show up everywhere. Internalize them.
 | Reference job: morning-digest | The 60+ personal jobs from the parent project |
 
 You're starting with a working kernel and a small reference set, not a turnkey assistant. Plan accordingly.
+
+---
+
+## Recent changes
+
+- **2026-10 · Moodle lecture recordings.** New job `moodle-recordings` (playbook `agent/ops-agent/jobs/moodle-recordings.md`, trigger `agent/scripts/trigger-moodle-recordings.sh`, CLIs `bin/moodle-recordings` + `bin/lecture-transcribe`, libs `lib/moodle-browser.mjs` + `lib/lecture-highlights.mjs`). First shipping job that uses browser automation: Playwright attaches to the automation Chrome on CDP :9222 to reuse the user's Moodle SSO session. State in `data/moodle-recordings-state.json`, per-recording files in `data/moodle-recordings/<id>/`, config in `data/moodle-config.json`. Supervisor changes: `moodle-recordings` dispatches coalesce like `hum` (`COALESCED_JOBS` in `agent/supervisor/http-server.mjs`) and get a 20-min turn watchdog (`agent/supervisor/index.mjs`).
 
 ---
 

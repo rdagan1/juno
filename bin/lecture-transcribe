@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""
+lecture-transcribe — local Hebrew-first speech-to-text for lecture recordings.
+
+Runs faster-whisper on-device (no audio leaves the host). The default model is
+ivrit-ai's Hebrew fine-tune of Whisper large-v3-turbo, which is markedly more
+accurate on Hebrew lectures than stock Whisper; set --model large-v3 (or any
+CTranslate2 Whisper model id/path) to override.
+
+Usage:
+    lecture-transcribe <audio-file> --out <dir> [--language he] [--model ID]
+                       [--device auto|cpu|cuda] [--compute-type int8|float16|...]
+
+Writes:
+    <dir>/transcript.json   {"language", "duration", "model", "segments": [{start,end,text}]}
+    <dir>/transcript.txt    "[hh:mm:ss] text" per segment
+
+Install:
+    pip install faster-whisper      # pulls CTranslate2 + PyAV; ffmpeg not required
+
+Exit codes: 0 ok · 2 usage · 3 faster-whisper missing · 4 transcription failed
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+
+DEFAULT_MODEL = os.environ.get("LECTURE_WHISPER_MODEL", "ivrit-ai/whisper-large-v3-turbo-ct2")
+
+
+def ts(sec: float) -> str:
+    s = max(0, int(sec))
+    return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("audio")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--language", default="he", help="ISO code, or 'auto' to detect")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--device", default=os.environ.get("LECTURE_WHISPER_DEVICE", "auto"))
+    ap.add_argument("--compute-type", default=os.environ.get("LECTURE_WHISPER_COMPUTE", "int8"))
+    ap.add_argument("--beam-size", type=int, default=5)
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.audio):
+        print(f"lecture-transcribe: no such file: {args.audio}", file=sys.stderr)
+        return 2
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        print("lecture-transcribe: faster-whisper not installed (pip install faster-whisper)", file=sys.stderr)
+        return 3
+
+    os.makedirs(args.out, exist_ok=True)
+    t0 = time.time()
+    try:
+        model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
+        segments, info = model.transcribe(
+            args.audio,
+            language=None if args.language == "auto" else args.language,
+            beam_size=args.beam_size,
+            # Lectures have long silences (writing on the board) where Whisper
+            # tends to hallucinate; VAD drops them.
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 700},
+            condition_on_previous_text=False,
+        )
+        out_segments = []
+        for seg in segments:
+            text = seg.text.strip()
+            if text:
+                out_segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": text})
+                if len(out_segments) % 100 == 0:
+                    print(f"[transcribe] {ts(seg.end)} / {ts(info.duration)}", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 — surface any backend failure as exit 4
+        print(f"lecture-transcribe: failed: {e}", file=sys.stderr)
+        return 4
+
+    doc = {
+        "language": info.language,
+        "duration": round(info.duration, 2),
+        "model": args.model,
+        "elapsed_sec": round(time.time() - t0, 1),
+        "segments": out_segments,
+    }
+    with open(os.path.join(args.out, "transcript.json"), "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, indent=1)
+    with open(os.path.join(args.out, "transcript.txt"), "w", encoding="utf-8") as f:
+        for s in out_segments:
+            f.write(f"[{ts(s['start'])}] {s['text']}\n")
+    print(json.dumps({"segments": len(out_segments), "duration": doc["duration"], "elapsed_sec": doc["elapsed_sec"]}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
