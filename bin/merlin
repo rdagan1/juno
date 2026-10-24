@@ -2281,7 +2281,12 @@ function cmdInit(args) {
   (async () => {
     console.log(c.bold('Merlin init') + ' — interactive config\n');
 
-    if (fs.existsSync(envPath) && !force) {
+    // bootstrap.sh drops an untouched copy of .env.example in place; that's
+    // a template, not config the user wrote, so don't make them confirm.
+    const examplePath = path.join(ROOT, '.env.example');
+    const isTemplate = fs.existsSync(envPath) && fs.existsSync(examplePath) &&
+      fs.readFileSync(envPath, 'utf8') === fs.readFileSync(examplePath, 'utf8');
+    if (fs.existsSync(envPath) && !force && !isTemplate) {
       const ans = await ask('.env already exists. Overwrite? (yes/no)', 'no');
       if (!/^y(es)?$/i.test(ans)) { console.log(c.dim('  aborted — .env left alone')); rl.close(); return; }
     }
