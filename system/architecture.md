@@ -203,6 +203,8 @@ The hum-intent file (a markdown doc you author) defines what the loop should and
 
 Why: most agent work is "run this script and read the output." Going through MCP gives you (a) structured tool-call traces for the conversation history, (b) per-tool permissioning via `allowedTools`, and (c) a uniform shape no matter what the script is written in (bash, Node, Python).
 
+**Moodle MCP** (`agent/moodle-mcp/`) is a separate, read-only MCP server (`mcp__moodle__*`) loaded by both agents. It wraps a Moodle site's Web Services REST API (the same API the Moodle mobile app uses) to pull courses, course materials (files are downloaded to `data/moodle/files/<course_id>/` with text extracted), deadlines, assignments + submission status, quizzes, grades, and forum announcements. Auth is `MOODLE_URL` + `MOODLE_TOKEN` (or username/password) from `.env`. It cannot submit, post, or modify anything. Setup: `docs/integrations/moodle.md`.
+
 When you add a new CLI under `bin/`, it shows up in the agent's tool list automatically. There's nothing to register.
 
 ---
@@ -274,6 +276,7 @@ agent/                 the kernel
   config/              agents.json + schema + loader
   dispatch-bridge/     server-to-server dispatch channel
   gmail-channel/       opt-in Gmail Pub/Sub ingress
+  moodle-mcp/          read-only Moodle MCP server (courses, files, deadlines, grades)
   phone-channel/       opt-in companion-app realtime ingress
   webhook-channel/     opt-in HTTP webhook ingress
   scripts/             watchdog, gmail setup/renew, log rotation, hum harness + harvesters
@@ -350,6 +353,12 @@ A few patterns that show up everywhere. Internalize them.
 | Reference job: morning-digest | The 60+ personal jobs from the parent project |
 
 You're starting with a working kernel and a small reference set, not a turnkey assistant. Plan accordingly.
+
+---
+
+## Recent changes
+
+- **2026-10-24 — Moodle integration.** Added `agent/moodle-mcp/` (read-only Moodle Web Services MCP server, 12 `moodle_*` tools), registered in `agent/supervisor/mcp-config.json` + `chat-mcp-config.json` and allowlisted as `mcp__moodle__*` in `agent/config/agents.json`. Token helper `bin/moodle-token`. Guide: `docs/integrations/moodle.md`. First step toward customizing Merlin as a study assistant.
 
 ---
 

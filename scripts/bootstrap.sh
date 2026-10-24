@@ -104,7 +104,7 @@ if [[ -f package.json ]]; then
 fi
 
 # Each agent subpackage has its own package.json
-for d in agent agent/supervisor agent/tools-mcp agent/webhook-channel agent/gmail-channel agent/phone-channel agent/dispatch-bridge bin; do
+for d in agent agent/supervisor agent/tools-mcp agent/webhook-channel agent/gmail-channel agent/phone-channel agent/moodle-mcp agent/dispatch-bridge bin; do
   if [[ -f "$d/package.json" ]]; then
     (cd "$d" && npm install --silent --no-audit --no-fund --no-progress)
     ok "$d/"

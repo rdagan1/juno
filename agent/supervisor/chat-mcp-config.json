@@ -22,6 +22,11 @@
         "SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
       },
       "alwaysLoad": true
+    },
+    "moodle": {
+      "command": "node",
+      "args": ["${MERLIN_HOME_USER}/dev/merlin/agent/moodle-mcp/index.mjs"],
+      "alwaysLoad": true
     }
   }
 }
