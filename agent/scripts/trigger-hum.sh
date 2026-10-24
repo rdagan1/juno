@@ -1,6 +1,7 @@
 #!/bin/bash
 : "${MERLIN_HOME:=${HOME}/Dev/merlin}"
 
+source "$(dirname "$0")/lib/portable.sh"
 source "$(dirname "$0")/lib/webhook-auth.sh"
 # Trigger hum via webhook → ops agent.
 #
@@ -15,7 +16,7 @@ source "$(dirname "$0")/lib/webhook-auth.sh"
 # 2026-04-14: rewrite — dropped --after-message piggyback and --silence-check
 # modes. The new hum is a pure 20-min tick; see jobs/hum.md.
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+portable_path
 
 MODE="tick"
 case "$1" in
@@ -83,7 +84,7 @@ if [ "$MODE" != "manual" ]; then
   GOG_BIN="gog"
   if [ -x "$GOG_BIN" ]; then
     NOW_ISO=$(TZ="$USER_TZ" date -Iseconds)
-    FOUR_AGO=$(TZ="$USER_TZ" date -v-4H -Iseconds)
+    FOUR_AGO=$(TZ="$USER_TZ" date_ago 4H -Iseconds)
     IN_MEETING=$("$GOG_BIN" calendar list --json --results-only --from "$FOUR_AGO" --to "$NOW_ISO" --all 2>/dev/null | \
       jq -r --arg now "$NOW_ISO" \
         '[.[] | select(.start.dateTime != null and .end.dateTime != null and .end.dateTime > $now and (.transparency // "opaque") != "transparent")] | length')

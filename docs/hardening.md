@@ -95,18 +95,10 @@ The two knobs:
 
 ## launchd / systemd: install as a service
 
-For real always-on:
+For real always-on, follow `docs/installer.md`:
 
-- **macOS**: see `docs/installer.md` (TODO — will copy `system/services.json` entries into `~/Library/LaunchAgents/*.plist`).
-- **Linux**: see `docs/installer.md` (TODO — `.service` files for `systemd --user`).
-
-Until that doc lands, manually:
-
-```bash
-# Sketch for macOS — copy the labels from system/services.json
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.merlin.session.plist
-launchctl kickstart gui/$(id -u)/ai.merlin.session
-```
+- **macOS**: a LaunchAgent plist in `~/Library/LaunchAgents/`, loaded with `launchctl bootstrap`.
+- **Linux**: `./scripts/install-systemd.sh` — installs `system/systemd/merlin.service` as a `systemd --user` unit and enables lingering.
 
 ## What to monitor in production
 

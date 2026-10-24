@@ -10,10 +10,15 @@
 //   await s.stop();               // EOF stdin, wait for exit
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
 
-const DEFAULT_CLAUDE = process.env.CLAUDE_BIN || `${process.env.HOME}/.local/bin/claude`;
+// The native installer puts claude in ~/.local/bin; `npm install -g` puts it
+// wherever npm's global prefix is (/usr/local/bin, /usr/bin, an nvm dir on
+// Linux), so fall back to a PATH lookup.
+const LOCAL_CLAUDE = `${process.env.HOME}/.local/bin/claude`;
+const DEFAULT_CLAUDE = process.env.CLAUDE_BIN || (existsSync(LOCAL_CLAUDE) ? LOCAL_CLAUDE : "claude");
 
 export class ClaudeSession extends EventEmitter {
   constructor(opts) {

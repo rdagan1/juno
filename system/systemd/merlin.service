@@ -1,0 +1,28 @@
+# merlin.service — systemd --user unit for the Merlin process-manager (Linux).
+# The Linux counterpart of the ai.claude.session LaunchAgent on macOS.
+#
+# Install with scripts/install-systemd.sh, which fills in the @PLACEHOLDERS@.
+# No EnvironmentFile: process-manager loads $MERLIN_HOME/.env itself, and
+# systemd's parser would keep .env.example-style trailing comments in values.
+
+[Unit]
+Description=Merlin agent OS (process-manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@MERLIN_HOME@
+Environment=MERLIN_HOME=@MERLIN_HOME@
+Environment=PATH=@PATH@
+ExecStart=@NODE@ @MERLIN_HOME@/agent/bin/process-manager.mjs
+Restart=always
+RestartSec=5
+# process-manager forwards SIGTERM to its children and waits up to 10s.
+KillMode=mixed
+TimeoutStopSec=20
+StandardOutput=append:@MERLIN_HOME@/agent/logs/claude-launchagent.log
+StandardError=append:@MERLIN_HOME@/agent/logs/claude-launchagent.err.log
+
+[Install]
+WantedBy=default.target

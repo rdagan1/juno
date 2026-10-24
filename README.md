@@ -75,7 +75,7 @@ cd ~/Dev/merlin
 ./bin/merlin tail ops
 ```
 
-For 24/7 deployment, install the launchd or systemd service per [`docs/installer.md`](docs/installer.md).
+For 24/7 deployment, install the launchd or systemd service per [`docs/installer.md`](docs/installer.md) — on Linux that's one command: `./scripts/install-systemd.sh`.
 
 ## What ships out of the box
 

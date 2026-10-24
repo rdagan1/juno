@@ -76,8 +76,22 @@ else
   warn "Claude Code CLI not on PATH. Install with: npm install -g @anthropic-ai/claude-code"
 fi
 
+# bash 4+ for the agent scripts (macOS ships 3.2 as /bin/bash)
+BASH_MAJOR=$(bash -c 'echo ${BASH_VERSINFO[0]}')
+if [[ $BASH_MAJOR -lt 4 ]]; then
+  warn "bash on PATH is $(bash -c 'echo $BASH_VERSION') — agent scripts want 4+ (macOS: brew install bash)"
+fi
+
+# Watchdog + trigger scripts depend on these; cron-driven jobs break without them.
+for tool in curl jq python3; do
+  command -v "$tool" >/dev/null 2>&1 || warn "$tool not installed — watchdog/trigger scripts need it"
+done
+if [[ "$(uname -s)" == "Linux" ]] && ! command -v crontab >/dev/null 2>&1; then
+  warn "crontab not installed — scheduled jobs in system/tasks.json need cron (Debian/Ubuntu: apt install cron)"
+fi
+
 # Optional integrations
-for tool in gh op gog jq; do
+for tool in gh op gog; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool installed"
   else
@@ -144,6 +158,9 @@ Next steps:
   1. ./bin/merlin init          # interactive config wizard
   2. ./bin/merlin up            # start everything in the foreground
   3. ./bin/merlin tail ops      # watch the agent work
+
+For 24/7 deployment: docs/installer.md
+  (Linux: ./scripts/install-systemd.sh)
 
 For deeper docs: ./system/architecture.md
 EOF

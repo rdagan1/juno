@@ -1,10 +1,11 @@
 #!/bin/bash
 # cron runs with PATH=/usr/bin:/bin; tools like gmail-action need node via
-# homebrew. Set PATH explicitly so checks don't silently no-op (the Gmail
+# homebrew / ~/.local/bin. Set PATH explicitly so checks don't silently no-op (the Gmail
 # unread sweep was dead from Apr 10 2026 until this was added).
 : "${MERLIN_HOME:=${HOME}/Dev/merlin}"
 
-export PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/sbin
+source "$(dirname "$0")/lib/portable.sh"
+portable_path
 source "$(dirname "$0")/lib/webhook-auth.sh"
 # watchdog.sh — health monitor for the agent process-manager.
 # Runs every 5 min via cron: */5 * * * * /path/to/watchdog.sh
@@ -54,7 +55,7 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG"; }
 log_throttled() {
   local marker="$1" msg="$2" period="${3:-900}"
   if [ -f "$marker" ]; then
-    local age=$(( $(date +%s) - $(stat -f%m "$marker") ))
+    local age=$(file_age "$marker")
     [ "$age" -lt "$period" ] && return 0
   fi
   touch "$marker"
@@ -84,7 +85,7 @@ notify() {
   if "$SEND" --skip-precheck --intent watchdog-alert --channel system "$1" > /dev/null 2>&1; then
     log "Notified via Merlin: $1"
   elif [ -x "$GMAIL_ACTION" ]; then
-    "$GMAIL_ACTION" draft "${MERLIN_OWNER_EMAIL}" "🔴 Mac Mini Watchdog" "$1" > /dev/null 2>&1
+    "$GMAIL_ACTION" draft "${MERLIN_OWNER_EMAIL}" "🔴 Merlin Watchdog ($(hostname -s))" "$1" > /dev/null 2>&1
     log "Notified via email draft (Merlin unavailable): $1"
   else
     log "ALERT (no notification channel): $1"
@@ -93,7 +94,7 @@ notify() {
 
 should_alert() {
   if [ -f "$ALERT_COOLDOWN" ]; then
-    local age=$(( $(date +%s) - $(stat -f%m "$ALERT_COOLDOWN") ))
+    local age=$(file_age "$ALERT_COOLDOWN")
     [ "$age" -lt 900 ] && return 1
   fi
   touch "$ALERT_COOLDOWN"
@@ -172,7 +173,7 @@ incident_should_alert() {
   local first_file="$INCIDENT_DIR/${key}.alert_first"
 
   if [ -f "$alerted_file" ]; then
-    local age=$(( $(date +%s) - $(stat -f%m "$alerted_file") ))
+    local age=$(file_age "$alerted_file")
     [ "$age" -lt "$cooldown" ] && return 1
   fi
 
@@ -182,7 +183,7 @@ incident_should_alert() {
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
   fi
   if [ "$count" -ge "$max_alerts" ] && [ -f "$first_file" ]; then
-    local window_age=$(( $(date +%s) - $(stat -f%m "$first_file") ))
+    local window_age=$(file_age "$first_file")
     if [ "$window_age" -lt "$max_window" ]; then
       return 1
     fi
@@ -259,14 +260,14 @@ if [ ! -f "$HUM_RUNS" ]; then
   : > "$HUM_RUNS"
 fi
 
-# --- Check process-manager is alive (launchd should keep it running) ---
+# --- Check process-manager is alive (launchd/systemd should keep it running) ---
 if ! pgrep -f "process-manager.mjs" > /dev/null 2>&1; then
   ATTEMPT=$(incident_seen "process-manager-down")
-  log "Process manager not running (attempt $ATTEMPT) — kickstarting ai.claude.session"
-  launchctl kickstart -k "gui/$UID/ai.claude.session" >> "$LOG" 2>&1 || true
-  # Alert only if the LaunchAgent kickstart didn't bring it back by next tick.
+  log "Process manager not running (attempt $ATTEMPT) — restarting via init (launchd/systemd)"
+  restart_process_manager >> "$LOG" 2>&1 || true
+  # Alert only if the init restart didn't bring it back by next tick.
   if [ "$ATTEMPT" -ge 2 ] && incident_should_alert "process-manager-down"; then
-    notify "🔴 Process manager is down and didn't restart after launchctl kickstart. Manual intervention needed on Mac Mini."
+    notify "🔴 Process manager is down and didn't restart via launchd/systemd. Manual intervention needed on $(hostname -s)."
   fi
   exit 0
 else
@@ -299,7 +300,7 @@ if [ -n "$HEALTH_PORT" ]; then
     fi
 
     # Check event staleness (skip if we just restarted)
-    if [ ! -f "$STALE_RESTART_COOLDOWN" ] || [ $(( $(date +%s) - $(stat -f%m "$STALE_RESTART_COOLDOWN") )) -ge 900 ]; then
+    if [ ! -f "$STALE_RESTART_COOLDOWN" ] || [ $(file_age "$STALE_RESTART_COOLDOWN") -ge 900 ]; then
       LAST_AGE=$(echo "$HEALTH" | jq -r '.lastEventAgeMs // 0')
       QUEUE_DEPTH=$(echo "$HEALTH" | jq -r '.queueDepth // 0')
       # Stale only matters if there's work in flight
@@ -345,7 +346,7 @@ if [ -n "$HEALTH_PORT" ]; then
         # if silently bad between daily 06:00 renewals.
         SHOULD_RENEW=1
         if [ -f "$PUSH_GAP_RENEW_COOLDOWN" ]; then
-          COOLDOWN_AGE=$(( $(date +%s) - $(stat -f%m "$PUSH_GAP_RENEW_COOLDOWN") ))
+          COOLDOWN_AGE=$(file_age "$PUSH_GAP_RENEW_COOLDOWN")
           [ "$COOLDOWN_AGE" -lt 3600 ] && SHOULD_RENEW=0
         fi
         if [ "$SHOULD_RENEW" -eq 1 ]; then
@@ -523,7 +524,7 @@ if [ -f "$HOOKDECK_LOG" ]; then
     RECOVERED=$(echo "$LINES_AFTER" | grep -Ec "\[200\] POST|is reachable|Listening on")
     if [ "$RECOVERED" -eq 0 ]; then
       # Check how long ago the connection lost happened (no recovery yet)
-      LOG_MTIME=$(stat -f%m "$HOOKDECK_LOG")
+      LOG_MTIME=$(file_mtime "$HOOKDECK_LOG")
       NOW=$(date +%s)
       AGE_SEC=$(( NOW - LOG_MTIME ))
       log "Hookdeck appears disconnected: last 'Connection lost' has no subsequent POST (log mtime ${AGE_SEC}s ago)"
@@ -572,7 +573,7 @@ if [ -f "$HOOKDECK_LOG" ]; then
       if [ "$AGE_SEC" -ge "$HOOKDECK_RESTART_MIN_AGE" ]; then
         SHOULD_RESTART=1
         if [ -f "$HOOKDECK_RESTART_COOLDOWN" ]; then
-          COOLDOWN_AGE=$(( $(date +%s) - $(stat -f%m "$HOOKDECK_RESTART_COOLDOWN") ))
+          COOLDOWN_AGE=$(file_age "$HOOKDECK_RESTART_COOLDOWN")
           [ "$COOLDOWN_AGE" -lt 600 ] && SHOULD_RESTART=0
         fi
         if [ "$SHOULD_RESTART" -eq 1 ]; then
@@ -662,27 +663,26 @@ fi
 # just see canned text forever. architecture.md marks canned as the only
 # permitted fallback; it is not a desirable steady state.
 OLLAMA_RESTART_COOLDOWN="${MERLIN_HOME}/data/.ollama-restart-cooldown"
-BREW_BIN=brew
 if ! curl -sf --max-time 3 http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
   ATTEMPT=$(incident_seen "ollama-down")
   log "Ollama unreachable on :11434 (attempt $ATTEMPT) — phone-channel acks will fall through to CANNED"
   ISSUES="$ISSUES ollama(down)"
 
-  # Self-heal: brew services restart at most once per 10 min.
+  # Self-heal: restart the Ollama service at most once per 10 min.
   SHOULD_RESTART=1
   if [ -f "$OLLAMA_RESTART_COOLDOWN" ]; then
-    COOLDOWN_AGE=$(( $(date +%s) - $(stat -f%m "$OLLAMA_RESTART_COOLDOWN") ))
+    COOLDOWN_AGE=$(file_age "$OLLAMA_RESTART_COOLDOWN")
     [ "$COOLDOWN_AGE" -lt 600 ] && SHOULD_RESTART=0
   fi
-  if [ "$SHOULD_RESTART" -eq 1 ] && [ -x "$BREW_BIN" ]; then
-    log "Attempting: brew services restart ollama"
-    "$BREW_BIN" services restart ollama >> "$LOG" 2>&1
+  if [ "$SHOULD_RESTART" -eq 1 ]; then
+    log "Attempting: restart_ollama ($MERLIN_OS)"
+    restart_ollama >> "$LOG" 2>&1
     touch "$OLLAMA_RESTART_COOLDOWN"
   fi
 
-  # Alert only if brew restart didn't bring it back by the next tick.
+  # Alert only if the restart didn't bring it back by the next tick.
   if [ "$ATTEMPT" -ge 2 ] && incident_should_alert "ollama-down"; then
-    notify "🔴 Ollama (local Gemma) is down on :11434 and didn't recover after brew services restart ($ATTEMPT consecutive ticks). Phone-channel acks falling through to canned messages. Manual intervention needed."
+    notify "🔴 Ollama (local Gemma) is down on :11434 and didn't recover after a service restart ($ATTEMPT consecutive ticks). Phone-channel acks falling through to canned messages. Manual intervention needed."
   fi
 else
   incident_clear "ollama-down"
@@ -709,7 +709,7 @@ if ! curl -sf --max-time 3 http://127.0.0.1:9096/ > /dev/null 2>&1; then
   fi
 
   if [ "$ATTEMPT" -ge 2 ] && incident_should_alert "wiki-server-down"; then
-    notify "🔴 Wiki server (:9096) down and not recovering after $ATTEMPT consecutive ticks. Manual intervention needed on Mac Mini."
+    notify "🔴 Wiki server (:9096) down and not recovering after $ATTEMPT consecutive ticks. Manual intervention needed on $(hostname -s)."
   fi
 else
   incident_clear "wiki-server-down"
@@ -730,7 +730,7 @@ if [ -x "$GH_BIN" ]; then
     ISSUES="$ISSUES gh-auth(invalid)"
     SHOULD_ALERT=1
     if [ -f "$GH_ALERT_COOLDOWN" ]; then
-      AGE=$(( $(date +%s) - $(stat -f%m "$GH_ALERT_COOLDOWN") ))
+      AGE=$(file_age "$GH_ALERT_COOLDOWN")
       [ "$AGE" -lt 86400 ] && SHOULD_ALERT=0
     fi
     if [ "$SHOULD_ALERT" -eq 1 ]; then
@@ -760,8 +760,8 @@ if [ -r "$GMAIL_WATCH_LAST" ]; then
   if [ "$GWL_OK" = "false" ]; then
     WARN="renewal failed: $(echo "$GWL_ERR" | head -c 160)"
   elif [ -n "$GWL_EXPIRES" ]; then
-    # Parse ISO-8601 UTC → epoch (macOS date -j)
-    GWL_EPOCH=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$GWL_EXPIRES" +%s 2>/dev/null)
+    # Parse ISO-8601 UTC → epoch
+    GWL_EPOCH=$(iso_utc_to_epoch "$GWL_EXPIRES")
     if [ -n "$GWL_EPOCH" ]; then
       SECS_LEFT=$(( GWL_EPOCH - NOW_EPOCH ))
       if [ "$SECS_LEFT" -lt 0 ]; then
@@ -781,7 +781,7 @@ if [ -r "$GMAIL_WATCH_LAST" ]; then
     # (Gmail's watch endpoint is idempotent; same topic just extends expiry).
     SHOULD_RENEW=1
     if [ -f "$GMAIL_WATCH_RENEW_COOLDOWN" ]; then
-      AGE=$(( NOW_EPOCH - $(stat -f%m "$GMAIL_WATCH_RENEW_COOLDOWN") ))
+      AGE=$(( NOW_EPOCH - $(file_mtime "$GMAIL_WATCH_RENEW_COOLDOWN") ))
       [ "$AGE" -lt 3600 ] && SHOULD_RENEW=0
     fi
     if [ "$SHOULD_RENEW" -eq 1 ]; then
@@ -811,7 +811,7 @@ if [ -x "$GOG_BIN" ]; then
     ISSUES="$ISSUES gog-auth(invalid)"
     SHOULD_ALERT=1
     if [ -f "$GOG_ALERT_COOLDOWN" ]; then
-      AGE=$(( $(date +%s) - $(stat -f%m "$GOG_ALERT_COOLDOWN") ))
+      AGE=$(file_age "$GOG_ALERT_COOLDOWN")
       [ "$AGE" -lt 86400 ] && SHOULD_ALERT=0
     fi
     if [ "$SHOULD_ALERT" -eq 1 ]; then

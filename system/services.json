@@ -1,11 +1,12 @@
 {
-  "_comment": "LaunchAgents and long-running processes that make up the Merlin always-on server.",
+  "_comment": "User services and long-running processes that make up the Merlin always-on server. A user-service entry carries a launchd label/plist (macOS) and/or a systemd_unit (Linux, ~/.config/systemd/user/); merlin status/services/doctor skip entries with no id for the current platform. Unit templates: system/systemd/.",
   "services": [
     {
       "name": "claude-session",
-      "type": "launchagent",
+      "type": "user-service",
       "label": "ai.claude.session",
       "plist": "~/Library/LaunchAgents/ai.claude.session.plist",
+      "systemd_unit": "merlin.service",
       "description": "Launches process-manager which supervises chat-supervisor, ops-supervisor, and hookdeck. KeepAlive=true.",
       "script": "agent/bin/process-manager.mjs",
       "logs": {
@@ -16,9 +17,10 @@
     },
     {
       "name": "claude-heartbeat",
-      "type": "launchagent",
+      "type": "user-service",
       "label": "com.example.merlin-heartbeat",
       "plist": "~/Library/LaunchAgents/com.example.merlin-heartbeat.plist",
+      "systemd_unit": "merlin-heartbeat.timer",
       "description": "Posts system health to Firebase RTDB every 120s.",
       "script": "agent/scripts/heartbeat-sender.sh",
       "logs": {
@@ -30,7 +32,7 @@
     },
     {
       "name": "resilience-test",
-      "type": "launchagent",
+      "type": "user-service",
       "label": "ai.claude.resilience-test",
       "plist": "~/Library/LaunchAgents/ai.claude.resilience-test.plist",
       "description": "Scheduled kill-tests of the agent to verify recovery. StartCalendarInterval.",
@@ -43,7 +45,7 @@
     },
     {
       "name": "actions-runner",
-      "type": "launchagent",
+      "type": "user-service",
       "label": "actions.runner.${MERLIN_OWNER}-merlin.${MERLIN_HOST}-merlin",
       "plist": "~/Library/LaunchAgents/actions.runner.${MERLIN_OWNER}-merlin.${MERLIN_HOST}-merlin.plist",
       "description": "GitHub Actions self-hosted runner for ${MERLIN_OWNER}/merlin (iOS/macOS TestFlight builds).",

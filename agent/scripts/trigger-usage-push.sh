@@ -21,7 +21,8 @@ set -uo pipefail
 # relocated checkout doesn't break it; honor an explicit MERLIN_HOME if set.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${MERLIN_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)}"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+source "$SCRIPT_DIR/lib/portable.sh"
+portable_path
 
 LOG="${MERLIN_HOME}/agent/logs/usage-push.log"
 TS="$(date '+%Y-%m-%d %H:%M:%S')"

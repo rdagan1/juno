@@ -9,7 +9,7 @@ The README's prereqs list is the minimum. This is the complete map: required vs 
 | **Node.js 22.5+** | Built-in `node:sqlite` requires 22.5+; all kernel code is JS/TS | [nodejs.org](https://nodejs.org) | `node --version` |
 | **npm** | Dependency install across subpackages | ships with Node | `npm --version` |
 | **A Claude account** | Either an API key (pay-per-token) or Max subscription | [console.anthropic.com](https://console.anthropic.com) | — |
-| **A POSIX shell** | bash 4+ (macOS users: `brew install bash` for 5.x; the default `/bin/bash` is 3.2 from 2007 and may misbehave) | — | `bash --version` |
+| **A POSIX shell** | bash 4+ (macOS users: `brew install bash` for 5.x; the default `/bin/bash` is 3.2 from 2007 and may misbehave). GNU (Linux) and BSD (macOS) userland both work — scripts go through `agent/scripts/lib/portable.sh`. | — | `bash --version` |
 
 ## Tier 2 — strongly recommended
 
@@ -93,7 +93,7 @@ See [Apple's docs](https://developer.apple.com/documentation/appstoreconnectapi/
 If you're putting Merlin on a dedicated machine (Mac mini, Intel NUC, Raspberry Pi if Linux, anything 24/7):
 
 - **macOS**: `launchctl`, auto-login enabled, FileVault disabled, `pmset` tuned for never-sleep. Full procedure in [`docs/installer.md`](installer.md).
-- **Linux**: `systemctl --user`, `loginctl enable-linger` for the user. Procedure in [`docs/installer.md`](installer.md).
+- **Linux**: `systemctl --user`, `loginctl enable-linger` for the user, `cron` for scheduled jobs. `./scripts/install-systemd.sh` does the unit + linger setup. Procedure in [`docs/installer.md`](installer.md).
 - **Tailscale** (or equivalent) if you want to reach the host's wiki UI at port 9096 from elsewhere on your network. Optional — Merlin works fine on localhost only.
 
 ## Tier 4 — purely optional convenience

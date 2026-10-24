@@ -15,7 +15,8 @@
 
 : "${MERLIN_HOME:=${HOME}/Dev/merlin}"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+source "$(dirname "$0")/lib/portable.sh"
+portable_path
 
 STATE_FILE="${MERLIN_HOME}/data/chrome-cdp-state.json"
 LOG="${MERLIN_HOME}/agent/logs/watchdog.log"
@@ -75,12 +76,13 @@ write_state() {
     > "$STATE_FILE"
 }
 
-# Try to recover Chrome CDP via the LaunchAgent. macOS launchctl kickstart
-# tears down the existing instance (-k) and spawns a fresh one. Returns 0
-# on launchctl success regardless of whether Chrome actually came back up
+# Try to recover Chrome CDP via its user service (LaunchAgent
+# com.merlin.chrome-cdp on macOS, systemd --user chrome-cdp.service on Linux).
+# The restart tears down the existing instance and spawns a fresh one. Returns 0
+# on restart success regardless of whether Chrome actually came back up
 # — the next watchdog tick re-probes :9222 and notifies if still down.
 self_heal_chrome_cdp() {
-  launchctl kickstart -k "gui/$UID/com.merlin.chrome-cdp" >> "$LOG" 2>&1
+  restart_user_service com.merlin.chrome-cdp chrome-cdp.service >> "$LOG" 2>&1
 }
 
 # First-ever run: bootstrap state silently. No ping — the user just deployed the
@@ -97,7 +99,7 @@ if [ "$PREV" = "unknown" ]; then
   exit 0
 fi
 
-# UP → DOWN: kickstart the LaunchAgent first; defer any user-facing alert
+# UP → DOWN: restart the chrome-cdp user service first; defer any user-facing alert
 # until the NEXT tick. If the kickstart recovers Chrome before we re-probe,
 # the next tick reads "up" and the alert never fires.
 if [ "$PREV" = "up" ] && [ "$CURR" = "down" ]; then

@@ -156,7 +156,7 @@ Scheduled work in Merlin is **playbook-driven**, not code-driven. A job is two p
 1. **A trigger script** under `agent/scripts/trigger-<job>.sh` — bash, sources auth helpers, gates on prerequisites, POSTs the webhook to fire the job.
 2. **A playbook** under `agent/ops-agent/jobs/<job>.md` — the actual instructions the agent reads when dispatched. Plain markdown.
 
-The registry of active jobs is `system/tasks.json` — each entry has a name, cron schedule, trigger script path, and metadata. The process that drives the schedule is whatever you wire to cron / launchd / systemd (example crontabs ship in `installer/`).
+The registry of active jobs is `system/tasks.json` — each entry has a name, cron schedule, trigger script path, and metadata. The process that drives the schedule is whatever you wire to cron / launchd / systemd (example crontab lines in `docs/installer.md`).
 
 **Why markdown playbooks instead of code.** You edit the playbook in your editor; the next firing of the job picks up the new instructions, no agent restart needed, no deploy. The agent reads the playbook as instructions in its first user-turn, then proceeds. This is the lowest-friction iteration loop we've found for agentic systems.
 
@@ -259,7 +259,7 @@ Both modes are first-class. The kernel is auth-mode-neutral — pick whichever f
 | `agent/logs/supervisor-{ops,chat}/events.ndjson` | Full session stream (one JSON line per turn). Survives restarts. |
 | `merlin logs <job>` | Tail the log file for a specific job. |
 | `GET :9093/health` | JSON: `{childAlive, lastTurnAt, turnCount, cost, restarts, up}`. Webhook channels check this before dispatching to avoid queueing into a dead agent. |
-| Heartbeat sender | LaunchAgent / systemd timer that POSTs system health to a configurable destination every 2 min (Firebase RTDB, generic webhook, whatever you wire). |
+| Heartbeat sender | LaunchAgent / systemd timer (`merlin-heartbeat.timer`) that POSTs system health to a configurable destination every 2 min (Firebase RTDB, generic webhook, whatever you wire). |
 | Watchdog | Cron every 2 min. Detects stuck/stale agents, OAuth-expiry, channel disconnects. Follows heal-then-alert: a probe failure self-heals first, only escalates on consecutive failures. |
 
 ---
@@ -294,7 +294,8 @@ system/
   architecture.md      this doc
   wiki-architecture.md memory layer detail
   tasks.json           scheduled-job registry
-  services.json        runtime service registry
+  services.json        runtime service registry (launchd labels + systemd units)
+  systemd/             systemd --user unit templates (Linux; see scripts/install-systemd.sh)
 
 docs/                  user-facing guides (TODO — getting started, writing a job, hardening, ...)
 ```
@@ -305,8 +306,8 @@ docs/                  user-facing guides (TODO — getting started, writing a j
 
 What happens from cold boot to "agent answered me":
 
-1. **`init` boots the host service.** macOS: `launchd` brings up `merlin.session` LaunchAgent. Linux: `systemd` brings up the analogous unit. Both have `KeepAlive=true`.
-2. **`merlin.session` execs `agent/bin/process-manager.mjs`.** Process-manager sources `.env` so env-var substitution in `.mcp.json` resolves.
+1. **`init` boots the host service.** macOS: `launchd` brings up the `ai.claude.session` LaunchAgent (`KeepAlive=true`). Linux: `systemd --user` brings up `merlin.service` (`Restart=always`, template in `system/systemd/`, installed by `scripts/install-systemd.sh`).
+2. **The init unit execs `agent/bin/process-manager.mjs`.** Process-manager sources `.env` so env-var substitution in `.mcp.json` resolves.
 3. **process-manager spawns the supervisors as direct children.** Each supervisor in turn:
    - Reads `agent/config/agents.json` to find its role's config.
    - Resolves the session-id from its state file (`agent/supervisor/state/{role}/session.json`).
@@ -319,6 +320,9 @@ Restart semantics:
 - `POST :9093/restart` (ops) → kills the inner claude-session child only. Supervisor PID keeps its uptime. Used by the watchdog when it detects a hung child.
 - `kill <supervisor-pid>` → process-manager respawns the supervisor. The inner child's session-id persists, so the next start is `--resume` of the same conversation.
 - `kill <process-manager-pid>` → `init` respawns it. The supervisors then come back, the children come back, the session-ids persist.
+- `merlin restart <ops|chat|hookdeck|wiki>` → SIGTERMs that child's pid (looked up on `:9095/health`); process-manager respawns it. `merlin restart session` restarts the whole tree through init (`launchctl kickstart -k` / `systemctl --user restart merlin.service`).
+
+**Platform portability.** The kernel is plain Node and runs on macOS and Linux. Shell scripts under `agent/scripts/` go through `agent/scripts/lib/portable.sh` for anything that differs between BSD and GNU userland or between launchd and systemd (`file_mtime`/`file_age`, `iso_utc_to_epoch`, `date_ago`, `restart_process_manager`, `restart_ollama`, `restart_user_service`) — never call `stat -f`, `date -v`/`-j`, `launchctl`, or `brew` directly in a script. `bin/merlin` reads service state from `launchctl list` on macOS and `systemctl --user show` on Linux; `system/services.json` entries carry a launchd `label` and/or a `systemd_unit`, and entries without an id for the current platform are skipped. macOS-only surfaces: AppleScript tools, `ioreg` idle time in `merlin context`, the companion-app builds + TestFlight runner.
 
 ---
 
@@ -330,7 +334,7 @@ A few patterns that show up everywhere. Internalize them.
 
 **Heal-then-alert.** The watchdog must exhaust auto-repair before paging. A probe failure self-heals first; the user-facing alert only goes out once the heal has demonstrably failed. Don't let a degraded system spam the user with manual-intervention pings they can't act on.
 
-**Inner-child restart vs supervisor restart vs process-manager restart.** Know which one you're triggering. Most agent issues need only the inner-child rotation. The watchdog uses `POST /restart` (inner only). A code change to the supervisor itself requires killing the supervisor PID. A code change to process-manager requires `launchctl kickstart -k`.
+**Inner-child restart vs supervisor restart vs process-manager restart.** Know which one you're triggering. Most agent issues need only the inner-child rotation. The watchdog uses `POST /restart` (inner only). A code change to the supervisor itself requires killing the supervisor PID. A code change to process-manager requires an init restart (`merlin restart session`).
 
 **Self-awareness, in writing.** Every capability/architecture change is supposed to update its in-repo doc in the same commit. This file. The job's playbook in `agent/ops-agent/jobs/<job>.md`. The relevant `CLAUDE.md`. The schema docs. The agent never learns its state by reading `git log` — it learns by reading the docs. Stale docs are worse than missing docs.
 

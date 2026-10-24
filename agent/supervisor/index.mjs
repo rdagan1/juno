@@ -437,7 +437,7 @@ class Supervisor {
 
   _sendPush(text) {
     try {
-      const bin = path.join(HOME, "dev/merlin/bin/merlin-send-curl");
+      const bin = path.join(MERLIN_HOME, "bin/merlin-send-curl");
       // --skip-precheck: supervisor alerts (auth outages, queue alarms) must
       // bypass the Sonnet-gated outbound precheck. The precheck depends on
       // the agents being up to dispatch; gating supervisor self-alerts

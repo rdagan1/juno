@@ -55,6 +55,41 @@ function shSafe(cmd, opts = {}) {
 function loadTasks() { return JSON.parse(fs.readFileSync(TASKS_JSON, 'utf8')).tasks; }
 function loadServices() { return JSON.parse(fs.readFileSync(SERVICES_JSON, 'utf8')).services; }
 
+// --- init system: launchd LaunchAgents on macOS, systemd --user units on Linux ---
+// services.json entries of type "user-service" carry a launchd `label`/`plist`
+// and/or a `systemd_unit`; an entry without an id for this platform is skipped.
+const IS_MAC = process.platform === 'darwin';
+function isUserService(sv) { return sv.type === 'user-service' || sv.type === 'launchagent'; }
+function serviceId(sv) { return IS_MAC ? sv.label : sv.systemd_unit; }
+function serviceUnitFile(sv) {
+  if (IS_MAC) return sv.plist ? expandHome(sv.plist) : null;
+  return sv.systemd_unit ? path.join(HOME, '.config/systemd/user', sv.systemd_unit) : null;
+}
+// Returns { status: 'running'|'loaded'|'not loaded', pid, last_exit }.
+function userServiceState(sv, launchctlList) {
+  const id = serviceId(sv);
+  if (IS_MAC) {
+    const line = (launchctlList || '').split('\n').find(l => l.endsWith('\t' + id));
+    if (!line) return { status: 'not loaded', pid: null };
+    const [pid, exit] = line.split('\t');
+    return { status: pid === '-' ? 'loaded' : 'running', pid: pid === '-' ? null : Number(pid), last_exit: exit };
+  }
+  const r = spawnSync('systemctl', ['--user', 'show', id, '-p', 'LoadState', '-p', 'ActiveState', '-p', 'MainPID', '-p', 'ExecMainStatus'], { encoding: 'utf8' });
+  if (r.status !== 0) return { status: 'not loaded', pid: null };
+  const props = Object.fromEntries((r.stdout || '').trim().split('\n').map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  if (props.LoadState !== 'loaded') return { status: 'not loaded', pid: null };
+  const pid = Number(props.MainPID) || null;
+  return { status: props.ActiveState === 'active' && pid ? 'running' : 'loaded', pid, last_exit: props.ExecMainStatus };
+}
+function platformServices() { return loadServices().filter(sv => isUserService(sv) && serviceId(sv)); }
+// argv that restarts the whole process-manager tree via init.
+function initRestartArgv() {
+  const sv = loadServices().find(s => s.name === 'claude-session') || {};
+  return IS_MAC
+    ? ['launchctl', 'kickstart', '-k', `gui/${process.getuid()}/${sv.label || 'ai.claude.session'}`]
+    : ['systemctl', '--user', 'restart', sv.systemd_unit || 'merlin.service'];
+}
+
 function hasFlag(args, ...names) { return names.some(n => args.includes(n)); }
 function getFlag(args, name, def = null) {
   const i = args.indexOf(name);
@@ -97,7 +132,7 @@ function cmdHelp() {
   console.log('  tasks run <name>              dispatch task via webhook\n');
   console.log(c.bold('HEALTH'));
   console.log('  status                        system health dashboard');
-  console.log('  services [--json]             LaunchAgents + tmux status');
+  console.log('  services [--json]             launchd / systemd --user services + health endpoints');
   console.log('  doctor [--json] [--repair]    run drift checks; --repair auto-fixes schedule drift + orphan scripts');
   console.log('  activity [--json]             the user\'s inferred state (active/winding_down/sleeping)');
   console.log('  context [--json] [--fresh]    unified merlin knowledge — profile + tastes + sources + recent\n');
@@ -121,7 +156,7 @@ function cmdHelp() {
   console.log('  git                           branch + status + recent commits');
   console.log('  ci [--limit N]                GitHub Actions runs\n');
   console.log(c.bold('CONTROL'));
-  console.log('  restart <ops|chat|hookdeck|session>  restart tmux pane or whole session\n');
+  console.log('  restart <ops|chat|hookdeck|wiki|session>  restart one process-manager child or the whole tree\n');
   console.log(c.bold('DISCOVERY'));
   console.log('  arch                          print architecture.md');
   console.log('  where <name>                  fuzzy-find by name (tasks, scripts, services)\n');
@@ -425,19 +460,10 @@ function collectStatus() {
   status.chat = fetchJson('http://127.0.0.1:9094/health');
   status.ops = fetchJson('http://127.0.0.1:9093/health');
 
-  // services from launchctl
-  const lc = shSafe('launchctl list') || '';
-  const svcLabels = loadServices().filter(s => s.type === 'launchagent').map(s => s.label);
-  for (const label of svcLabels) {
-    const line = lc.split('\n').find(l => l.endsWith('\t' + label));
-    if (!line) { status.services.push({ label, status: 'not loaded', pid: null }); continue; }
-    const [pid, exit, lbl] = line.split('\t');
-    status.services.push({
-      label,
-      status: pid === '-' ? 'loaded' : 'running',
-      pid: pid === '-' ? null : Number(pid),
-      last_exit: exit,
-    });
+  // services from launchd (macOS) / systemd --user (Linux)
+  const lc = IS_MAC ? (shSafe('launchctl list') || '') : null;
+  for (const sv of platformServices()) {
+    status.services.push({ label: serviceId(sv), ...userServiceState(sv, lc) });
   }
 
   // heartbeat age
@@ -507,17 +533,15 @@ function nextCronFire(expr, from) {
 
 // --- services ---
 function cmdServices(args) {
-  const services = loadServices();
-  const lc = shSafe('launchctl list') || '';
+  const services = loadServices().filter(sv => !isUserService(sv) || serviceId(sv));
+  const lc = IS_MAC ? (shSafe('launchctl list') || '') : null;
   const enriched = services.map(sv => {
-    if (sv.type === 'tmux') {
-      const tmuxOut = shSafe('tmux list-panes -t ' + sv.session + ' -F "#{pane_index} #{pane_current_command}"');
-      return { ...sv, status: tmuxOut ? 'running' : 'not running' };
+    if (sv.type === 'http') {
+      const ok = !!shSafe(`curl -sf --max-time 3 http://127.0.0.1:${sv.port}${sv.path || '/'}`);
+      return { ...sv, status: ok ? 'running' : 'not running', pid: null };
     }
-    const line = lc.split('\n').find(l => l.endsWith('\t' + sv.label));
-    if (!line) return { ...sv, status: 'not loaded', pid: null };
-    const [pid] = line.split('\t');
-    return { ...sv, status: pid === '-' ? 'loaded' : 'running', pid: pid === '-' ? null : Number(pid) };
+    const { status, pid } = userServiceState(sv, lc);
+    return { ...sv, status, pid };
   });
   if (hasFlag(args, '--json')) { console.log(JSON.stringify(enriched, null, 2)); return; }
   const rows = enriched.map(s => ({
@@ -665,15 +689,8 @@ function cmdTriageStatus(args) {
     s.supervisor_up = true;
     try { s.supervisor_health = JSON.parse(health); } catch {}
   }
-  // ops-agent process in pane 1
-  const tmuxOut = shSafe('tmux list-panes -t claude -F "#{pane_index} #{pane_current_command}"');
-  if (tmuxOut) {
-    const line = tmuxOut.split('\n').find(l => l.startsWith('1 '));
-    if (line) {
-      const cmd = line.slice(2);
-      s.ops_agent_running = cmd !== 'zsh' && cmd !== 'bash';
-    }
-  }
+  // ops-agent = the supervisor's inner claude child
+  s.ops_agent_running = !!s.supervisor_health?.childAlive;
   // last event from triage log
   if (fs.existsSync(TRIAGE_LOG)) {
     const lines = fs.readFileSync(TRIAGE_LOG, 'utf8').trim().split('\n');
@@ -692,7 +709,7 @@ function cmdTriageStatus(args) {
   console.log(c.bold('Email Triage Status') + '\n');
   console.log(`  ${s.paused ? c.yellow('⏸ PAUSED') : c.green('▶ active')}`);
   console.log(`  supervisor (HTTP 9093):     ${s.supervisor_up ? c.green('up') : c.red('down')}`);
-  console.log(`  ops-agent (pane 1):         ${s.ops_agent_running ? c.green('running') : c.red('not running')}`);
+  console.log(`  ops-agent (claude child):   ${s.ops_agent_running ? c.green('running') : c.red('not running')}`);
   if (h) {
     console.log(`  model:                      ${h.model || 'unknown'}`);
     console.log(`  child alive:                ${h.childAlive ? c.green('yes') : c.red('no')}`);
@@ -873,125 +890,35 @@ function cmdTriageResolve(args) {
 }
 
 // --- restart ---
-const TMUX = 'tmux';
-
-// Wrappers that send raw argv to tmux — no shell interpolation.
-function tmuxRun(args) {
-  const r = spawnSync(TMUX, args, { encoding: 'utf8' });
-  return { ok: r.status === 0, stdout: r.stdout || '', stderr: r.stderr || '' };
-}
-function tmuxSend(target, keys) { return tmuxRun(['send-keys', '-t', target, ...keys]); }
-function tmuxPaneCommand(paneIdx) {
-  const r = tmuxRun(['list-panes', '-t', 'claude:0', '-F', '#{pane_index} #{pane_current_command}']);
-  if (!r.ok) return null;
-  const line = r.stdout.split('\n').find(l => l.startsWith(paneIdx + ' '));
-  return line ? line.slice(2) : null;
-}
-function tmuxPaneCount() {
-  const r = tmuxRun(['list-panes', '-t', 'claude:0']);
-  return r.ok ? r.stdout.trim().split('\n').length : 0;
-}
-
-// Check if a TCP port is free by attempting to listen with `nc`.
-function portFree(port, timeoutSec = 3) {
-  const r = spawnSync('nc', ['-z', '-w', '1', 'localhost', String(port)], { encoding: 'utf8' });
-  // nc exits 0 if connection succeeds (port IN USE). exits non-0 if free.
-  return r.status !== 0;
-}
-
-function waitPortFree(port, maxSec = 4) {
-  for (let i = 0; i < maxSec; i++) {
-    if (portFree(port)) return true;
-    execFileSync('sleep', ['1']);
-  }
-  return portFree(port);
-}
+// process-manager owns every child and respawns any that exits, so restarting
+// one is: look up its pid on :9095/health, SIGTERM it, let process-manager
+// bring it back. `session` restarts the whole tree through init.
+const RESTART_TARGETS = { ops: 'ops-supervisor', chat: 'chat-supervisor', hookdeck: 'hookdeck', wiki: 'wiki-server' };
 
 function cmdRestart(args) {
   const target = args.find(a => !a.startsWith('--'));
-  if (!target) die('restart: usage: merlin restart <ops|chat|hookdeck|session>');
-  const CLAUDE = path.join(HOME, '.local/bin/claude');
-  const NODE = 'node';
-  const AGENT_DIR = path.join(TOOLS, 'agent');
-  const SUPERVISOR_DIR = path.join(AGENT_DIR, 'supervisor');
-  const CONFIG_DIR = path.join(AGENT_DIR, 'config');
+  const usage = `restart: usage: merlin restart <${[...Object.keys(RESTART_TARGETS), 'session'].join('|')}>`;
+  if (!target) die(usage);
 
-  // Load config dynamically
-  function loadAgentConfig(name) {
-    const cfg = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'agents.json'), 'utf8')).agents[name];
-    if (!cfg) die(`restart: agent '${name}' not in agents.json`);
-    return cfg;
-  }
-
-  const configs = {
-    chat: { idx: 0, cwd: path.join(AGENT_DIR, 'chat-agent'), ports_to_free: [] },
-    ops: { idx: 1, cwd: SUPERVISOR_DIR, ports_to_free: [9090, 9092, 9093] },
-    hookdeck: { idx: 2, cwd: AGENT_DIR, launch: 'hookdeck listen 9090 gmail-source', ports_to_free: [] },
-  };
-
-  // Session-level restart: kill tmux session, launchd rebuilds it.
   if (target === 'session') {
-    console.log(c.dim('killing tmux session "claude" — launchd (ai.claude.session) will respawn with fresh panes...'));
-    const killed = tmuxRun(['kill-session', '-t', 'claude']);
-    if (!killed.ok && !killed.stderr.includes("can't find session")) {
-      die(`kill-session failed: ${killed.stderr}`);
-    }
-    console.log(c.green('✓ session killed. Wait ~30s, then: merlin status'));
+    const [cmd, ...cmdArgs] = initRestartArgv();
+    console.log(c.dim(`restarting process-manager tree: ${cmd} ${cmdArgs.join(' ')}`));
+    const r = spawnSync(cmd, cmdArgs, { encoding: 'utf8' });
+    if (r.status !== 0) die(`${cmd} failed: ${(r.stderr || r.error?.message || '').trim()}`);
+    console.log(c.green('✓ restarted. Wait ~30s, then: merlin status'));
     return;
   }
 
-  if (!tmuxRun(['has-session', '-t', 'claude']).ok) {
-    die('tmux session "claude" is not running. Start: launchctl kickstart gui/$(id -u)/ai.claude.session OR merlin restart session');
-  }
-
-  const cfg = configs[target];
-  if (!cfg) die(`restart: unknown target '${target}'. Use ops, chat, hookdeck, or session.`);
-
-  const paneCount = tmuxPaneCount();
-  const paneTarget = `claude:0.${cfg.idx}`;
-  if (cfg.idx >= paneCount) {
-    if (target === 'hookdeck') {
-      console.log(c.yellow(`pane ${cfg.idx} missing (only ${paneCount} panes) — creating...`));
-      const split = tmuxRun(['split-window', '-t', 'claude', '-v', '-c', cfg.cwd]);
-      if (!split.ok) die(`split-window failed: ${split.stderr}`);
-      tmuxRun(['select-layout', '-t', 'claude', 'even-vertical']);
-    } else {
-      die(`restart: pane ${cfg.idx} does not exist (session has only ${paneCount} panes)`);
-    }
-  } else {
-    console.log(c.dim(`force-killing pane ${cfg.idx} (${target}) via tmux respawn-pane -k...`));
-    const respawn = tmuxRun(['respawn-pane', '-k', '-c', cfg.cwd, '-t', paneTarget, 'zsh']);
-    if (!respawn.ok) die(`respawn-pane failed: ${respawn.stderr}`);
-  }
-
-  execFileSync('sleep', ['1']);
-  for (const port of cfg.ports_to_free) {
-    if (!waitPortFree(port, 4)) {
-      console.log(c.yellow(`  warning: port ${port} still held after 4s — launch may fail to bind`));
-    }
-  }
-
-  let launchCmd;
-  if (target === 'hookdeck') {
-    launchCmd = cfg.launch;
-  } else if (target === 'ops') {
-    launchCmd = `${NODE} ${SUPERVISOR_DIR}/index.mjs --agent ops`;
-  } else {
-    // chat: interactive claude with dev-channels
-    const acfg = loadAgentConfig('chat');
-    const tools = acfg.allowedTools.map(t => /[*]/.test(t) ? `"${t}"` : t).join(' ');
-    const channels = (acfg.devChannels || []).map(c => 'server:' + c).join(' ');
-    launchCmd = `${CLAUDE} --model ${acfg.model} --dangerously-load-development-channels ${channels} --permission-mode ${acfg.permissionMode} --remote-control-session-name-prefix ${acfg.remoteControlPrefix} --allowedTools ${tools}`;
-  }
-  tmuxSend(paneTarget, [launchCmd, 'Enter']);
-
-  console.log(c.green(`✓ ${target} relaunched in pane ${cfg.idx}`));
-  if (target === 'chat') {
-    console.log(c.dim('  launcher will auto-accept dev-channels prompt within ~5s'));
-  }
-  if (target === 'ops') {
-    console.log(c.dim('  supervisor handles startup catchup automatically'));
-  }
+  const name = RESTART_TARGETS[target];
+  if (!name) die(`restart: unknown target '${target}'. ${usage}`);
+  const pm = fetchJson('http://127.0.0.1:9095/health');
+  if (!pm) die(`process-manager unreachable on :9095. Start it: ${initRestartArgv().join(' ')} (or: merlin up)`);
+  const child = (pm.children || []).find(ch => ch.name === name);
+  if (!child?.alive || !child.pid) die(`${name} is not running — process-manager will respawn it on its backoff schedule`);
+  try { process.kill(child.pid, 'SIGTERM'); }
+  catch (e) { die(`kill ${child.pid} failed: ${e.message}`); }
+  console.log(c.green(`✓ sent SIGTERM to ${name} (pid ${child.pid}) — process-manager will respawn it`));
+  if (target === 'ops') console.log(c.dim('  supervisor handles startup catchup automatically'));
 }
 
 // --- arch ---
@@ -1014,7 +941,7 @@ function cmdWhere(args) {
   // services
   for (const s of loadServices()) {
     if ((s.name || '').includes(ql) || (s.label || '').toLowerCase().includes(ql))
-      hits.push({ kind: 'service', name: s.name, location: s.plist || s.session || '' });
+      hits.push({ kind: 'service', name: s.name, location: s.plist || s.systemd_unit || s.session || '' });
   }
   // files
   const findOut = shSafe(`find "${TOOLS}" -maxdepth 6 -type f -name "*${q}*" -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" -not -path "*/SourcePackages/*" 2>/dev/null`) || '';
@@ -1103,14 +1030,11 @@ function cmdDoctor(args) {
   const missingSections = tasks.filter(t => t.ops_playbook_section && !t.job && !new RegExp(`^## ${escRe(t.ops_playbook_section)}( \\(.*\\))?\\s*$`, 'm').test(opsMd)).map(t => `${t.name} → ${t.ops_playbook_section}`);
   add('ops playbook sections exist', missingSections.length === 0, missingSections.length ? `missing: ${missingSections.join('; ')}` : `${tasks.length} sections verified in ops-agent/CLAUDE.md`);
 
-  // 5. services.json plists → exist
-  const missingPlists = [];
-  for (const s of services) {
-    if (s.type !== 'launchagent') continue;
-    const p = expandHome(s.plist);
-    if (!fs.existsSync(p)) missingPlists.push(s.label);
-  }
-  add('services.json plists exist', missingPlists.length === 0, missingPlists.length ? `missing: ${missingPlists.join(', ')}` : `${services.filter(s => s.type === 'launchagent').length} plists verified`);
+  // 5. services.json unit files (launchd plists / systemd user units) → exist
+  const unitKind = IS_MAC ? 'plists' : 'systemd units';
+  const platformSvcs = platformServices();
+  const missingPlists = platformSvcs.filter(s => !fs.existsSync(serviceUnitFile(s))).map(serviceId);
+  add(`services.json ${unitKind} exist`, missingPlists.length === 0, missingPlists.length ? `missing: ${missingPlists.join(', ')}` : `${platformSvcs.length} ${unitKind} verified`);
 
   // 6. no old Dev/Tools paths in tracked text files
   // Use git grep — it natively skips binary files and respects .gitignore.
@@ -1136,7 +1060,7 @@ function cmdDoctor(args) {
 
   // 9. process-manager running (check HTTP health endpoint — pgrep can't see cross-session processes on macOS)
   const pmHealth = shSafe('curl -sf --max-time 3 http://127.0.0.1:9095/health');
-  add('process-manager running', !!pmHealth, pmHealth ? 'HTTP 200' : 'unreachable on :9095 — check launchd');
+  add('process-manager running', !!pmHealth, pmHealth ? 'HTTP 200' : `unreachable on :9095 — check ${IS_MAC ? 'launchd' : 'systemctl --user status merlin.service'}`);
 
   // 10. supervisor health endpoints reachable
   const chatHealth = fetchJson('http://127.0.0.1:9094/health');
@@ -1234,7 +1158,7 @@ function cmdDoctor(args) {
   const cdpUp = cdpProbe === '200';
   add('chrome CDP port reachable', cdpUp, cdpUp
     ? 'HTTP 200 on :9222/json/version'
-    : `HTTP ${cdpProbe} on :9222 — automation Chrome not running. Check LaunchAgent: launchctl list | grep com.merlin.chrome-cdp. Browser-automation jobs (broadway-lottery etc.) will skip until this clears.`);
+    : `HTTP ${cdpProbe} on :9222 — automation Chrome not running. Check ${IS_MAC ? 'LaunchAgent: launchctl list | grep com.merlin.chrome-cdp' : 'systemctl --user status chrome-cdp.service'}. Browser-automation jobs (broadway-lottery etc.) will skip until this clears.`);
 
   // 15. gog tasks CLI reachable. The 2026-04-29 review documented memories
   // #914/#920 falsely flagging "gog CLI unavailable" because the symlink
@@ -1245,7 +1169,7 @@ function cmdDoctor(args) {
   const gogOk = gogProbe && !/no auth|missing|not found|error/i.test(gogProbe);
   add('gog tasks CLI reachable', !!gogOk, gogOk
     ? `lists fetched (${gogProbe.split('\n').filter(Boolean).length} rows)`
-    : `gog tasks list failed: ${(gogProbe || '<empty>').slice(0, 160)}. Re-auth via 'gog auth add ${MERLIN_OWNER_EMAIL} --services tasks' or fall back to service account.`);
+    : `gog tasks list failed: ${(gogProbe || '<empty>').slice(0, 160)}. Re-auth via 'gog auth add ${process.env.MERLIN_OWNER_EMAIL || '<your-email>'} --services tasks' or fall back to service account.`);
 
   if (hasFlag(args, '--json')) { console.log(JSON.stringify(checks, null, 2)); process.exit(checks.every(c => c.ok) ? 0 : 1); }
 
@@ -1871,9 +1795,9 @@ function buildSituation() {
 
   // HID idle time — minutes since last keyboard/mouse/trackpad input on this
   // Mac. Signals "at desk actively" vs "stepped away / on phone / in a
-  // meeting." `ioreg` returns nanoseconds.
+  // meeting." `ioreg` returns nanoseconds. macOS-only; null elsewhere.
   let atDeskMin = null;
-  try {
+  if (IS_MAC) try {
     const raw = shSafe(`ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print $NF; exit}'`);
     const ns = parseInt(raw, 10);
     if (Number.isFinite(ns)) atDeskMin = Math.round(ns / 1e9 / 60);
@@ -1884,7 +1808,7 @@ function buildSituation() {
   // trumps most other candidates).
   let upcomingEvents = [];
   try {
-    const raw = shSafe(`gog calendar list --account ${MERLIN_OWNER_EMAIL} --days 1 --max 20 --json 2>/dev/null`) || '';
+    const raw = shSafe(`gog calendar list --account ${process.env.MERLIN_OWNER_EMAIL} --days 1 --max 20 --json 2>/dev/null`) || '';
     const data = JSON.parse(raw || '{}');
     const events = data?.events || data?.items || [];
     const now = Date.now();

@@ -94,60 +94,50 @@ If you want the periodic Firebase RTDB heartbeat or scheduled crash-recovery kil
 
 ## Linux — systemd (user unit)
 
-A systemd-user service runs as your user without root.
+A systemd-user service runs as your user without root. Any 64-bit distro with systemd works (tested targets: Ubuntu 22.04+, Debian 12).
 
-### 1. Create the unit file
+### 1. Pre-flight host setup
 
-Save to `~/.config/systemd/user/merlin.service`:
-
-```ini
-[Unit]
-Description=Merlin agent OS
-After=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h/Dev/merlin
-Environment=MERLIN_HOME=%h/Dev/merlin
-EnvironmentFile=%h/Dev/merlin/.env
-ExecStart=/usr/bin/node %h/Dev/merlin/agent/bin/process-manager.mjs
-Restart=always
-RestartSec=5
-StandardOutput=append:%h/Dev/merlin/agent/logs/systemd.log
-StandardError=append:%h/Dev/merlin/agent/logs/systemd.err.log
-
-[Install]
-WantedBy=default.target
-```
-
-Adjust `WorkingDirectory` and `ExecStart` to match your clone location.
-
-### 2. Pre-flight host setup
-
-- **Lingering**: enable so the user service runs without you being logged in:
-  ```bash
-  loginctl enable-linger $(whoami)
-  ```
-- **Ollama**: install + enable as system service per Ollama's docs.
+- **Packages**: Node 22.5+, `curl`, `jq`, `python3`, `cron` (Debian/Ubuntu: `apt install curl jq python3 cron`), then `./scripts/bootstrap.sh`.
+- **Claude Code**: `npm install -g @anthropic-ai/claude-code` (or the native installer, which puts `claude` in `~/.local/bin`), then run `claude` once over SSH to log in. On a headless VM, the login flow prints a URL to open on another machine.
+- **Ollama**: install per Ollama's Linux docs (it registers a system `ollama.service`), then `ollama pull gemma3:4b && ollama pull nomic-embed-text`. The watchdog restarts it only if your user may do so without a password (a user unit, or a polkit rule) — it never uses sudo.
 - **Tailscale or equivalent**: if you want to reach the host's wiki UI at `:9096` from elsewhere on your network.
 
-### 3. Load and start
+### 2. Install the unit
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable merlin.service
-systemctl --user start merlin.service
-
-# Check
-systemctl --user status merlin.service
-journalctl --user -u merlin.service -f
+./scripts/install-systemd.sh
 ```
+
+This renders `system/systemd/merlin.service` into `~/.config/systemd/user/` with your checkout path and current `node`, enables lingering (`loginctl enable-linger`, so the service runs with nobody logged in — if that needs root it prints the `sudo` command for you), and enables + starts the unit. Re-run it after moving the checkout or switching Node versions. The unit deliberately has no `EnvironmentFile=`: process-manager loads `.env` itself.
+
+Run it from a real login session (SSH), not `su`/`sudo -u`, so `systemctl --user` can reach your user manager.
+
+### 3. Check
+
+```bash
+systemctl --user status merlin.service
+./bin/merlin status
+tail -f agent/logs/claude-launchagent.err.log   # process-manager's own log
+```
+
+### 4. Scheduled jobs + watchdog
+
+Same as macOS: cron entries that run the trigger scripts listed in `system/tasks.json` (`./bin/merlin cron` shows what's installed; `./bin/merlin doctor` flags drift), plus the watchdog every 5 minutes:
+
+```cron
+*/5 * * * * $HOME/Dev/merlin/agent/scripts/watchdog.sh
+0 3 * * *   $HOME/Dev/merlin/agent/scripts/rotate-agent-logs.sh
+```
+
+Set `MERLIN_HOME=` at the top of the crontab if your checkout isn't at `~/Dev/merlin`.
 
 ### Stop / restart
 
 ```bash
 systemctl --user restart merlin.service     # full restart (process-manager + all children)
-curl -X POST http://localhost:9093/restart   # inner-child only (faster)
+./bin/merlin restart ops                     # one supervisor (process-manager respawns it)
+curl -X POST http://localhost:9093/restart   # inner claude child only (fastest)
 ```
 
 ## Verifying it's working
@@ -187,9 +177,7 @@ rm ~/Library/LaunchAgents/ai.merlin.session.plist
 
 ### Linux
 ```bash
-systemctl --user stop merlin.service
-systemctl --user disable merlin.service
-rm ~/.config/systemd/user/merlin.service
+./scripts/install-systemd.sh --uninstall
 ```
 
 Both leave the `~/Dev/merlin` clone untouched. Delete that directory separately to fully remove.
