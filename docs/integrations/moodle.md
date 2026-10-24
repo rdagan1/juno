@@ -80,6 +80,7 @@ Some sites hide the course grade report from the mobile API (the site's public c
 | Morning brief | COURSEWORK section: due today/tomorrow | `agent/ops-agent/jobs/morning-digest.md` |
 | Hum `moodle-deadlines` | Pings about unsubmitted work as the deadline nears (72h → 48h → 24h → 6h escalation) | `agent/scripts/hum-harvesters/moodle-deadlines.mjs` |
 | Hum `moodle-updates` | Pings about new announcements, due-date changes, grades | `agent/scripts/hum-harvesters/moodle-updates.mjs` |
+| Lecture recordings | New recordings → local Hebrew transcription → exam-aware summary email. Uses browser automation, since recordings aren't in the Web Services API | `agent/ops-agent/jobs/moodle-recordings.md`; setup in [`moodle-recordings.md`](moodle-recordings.md) |
 | Chat study help | Answers grounded in the course's own files; quizzes and flashcards on request | `agent/chat-agent/CLAUDE.md` § Study Help |
 
 To turn them on:

@@ -75,8 +75,12 @@ const TURN_WATCHDOG_MS_DEFAULT = 10 * 60 * 1000;
 // killing the child mid-research and (per the 2026-05-08 fix below) losing
 // the dispatch entirely. Widen to 30 min — substantially more headroom than
 // the only successful attempt's actual duration.
+//
+// moodle-recordings may drive the browser itself (chrome-devtools MCP
+// fallback for players the scanner can't read) before emailing digests.
 const TURN_WATCHDOG_MS_BY_SOURCE = {
   "daily-summary": 20 * 60 * 1000,
+  "moodle-recordings": 20 * 60 * 1000,
   "portfolio-rebalance": 30 * 60 * 1000,
 };
 

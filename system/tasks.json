@@ -126,6 +126,26 @@
       "job": null
     },
     {
+      "name": "moodle-recordings",
+      "schedule": "*/30 7-23 * * *",
+      "schedule_human": "Every 30 minutes, 07:00-23:59",
+      "trigger_script": "agent/scripts/trigger-moodle-recordings.sh",
+      "webhook_url": "http://localhost:9092",
+      "webhook_task": "MOODLE RECORDINGS",
+      "ops_playbook_section": "Moodle Recordings",
+      "delivers_to": "email+merlin",
+      "phrases": [
+        "moodle",
+        "lecture recording",
+        "new lecture",
+        "lecture summary",
+        "summarize lecture",
+        "recording summary"
+      ],
+      "description": "Detect new lecture recordings on Moodle via browser automation (automation Chrome on CDP :9222, the user's logged-in session), transcribe locally with Hebrew Whisper (ivrit-ai) or use the platform's Hebrew captions, and summarize with a one-shot claude -p that pulls exam / not-on-exam / assignment / emphasis moments to the top. Heavy work runs in the trigger script (bin/moodle-recordings run); the ops-agent is dispatched only to email ready digests, create deadline tasks, drive the browser for players the scanner can't read, and send the re-login alert. See agent/ops-agent/jobs/moodle-recordings.md and docs/integrations/moodle-recordings.md.",
+      "job": "moodle-recordings"
+    },
+    {
       "name": "context-sync",
       "schedule": "*/30 * * * *",
       "schedule_human": "Every 30 minutes",

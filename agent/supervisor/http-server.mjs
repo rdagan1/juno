@@ -17,6 +17,8 @@ const MAX_BODY = 64 * 1024;
 const HOME = process.env.HOME;
 const MERLIN_HOME = process.env.MERLIN_HOME || path.join(HOME, "dev/merlin");
 const JOBS_DIR = path.join(MERLIN_HOME, "agent/ops-agent/jobs");
+// Jobs whose playbooks read live state, so a second queued copy is redundant.
+const COALESCED_JOBS = new Set(["hum", "moodle-recordings"]);
 // Personal-overlay drop. Jobs here are dispatchable identically to bundled
 // jobs; kernel jobs win on name conflicts. See docs/architecture-public-private.md.
 const JOBS_EXT_DIR = path.join(JOBS_DIR, "_ext");
@@ -166,12 +168,14 @@ export function startServers({ ports, gmailSource, supervisor }) {
       // this one. The 20-min cron tick re-fetches situation at dispatch time,
       // so stacking multiple queued hum items is pure duplicate work — and
       // when the dispatcher is slow/stuck, hum ticks are the single biggest
-      // contributor to runaway queue depth.
-      if (payload.job === "hum") {
-        const already = (supervisor.dispatcher.inFlight?.source === "hum") ||
-          supervisor.dispatcher.queue.some((i) => i.source === "hum");
+      // contributor to runaway queue depth. moodle-recordings is the same
+      // shape: its playbook reads pipeline state at run time, so one queued
+      // dispatch covers everything a second one would.
+      if (COALESCED_JOBS.has(payload.job)) {
+        const already = (supervisor.dispatcher.inFlight?.source === payload.job) ||
+          supervisor.dispatcher.queue.some((i) => i.source === payload.job);
         if (already) {
-          console.error(`[http] hum coalesced — already queued/in-flight`);
+          console.error(`[http] ${payload.job} coalesced — already queued/in-flight`);
           res.writeHead(200); res.end("COALESCED");
           return;
         }
