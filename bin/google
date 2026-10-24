@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+// google — Google Calendar / Tasks / Contacts from the shell (replaces `gog`).
+//
+// Usage:
+//   google auth                                  one-time OAuth: prints the refresh token for .env
+//   google check                                 exit 0 ok, 3 auth broken, 1 other error
+//   google calendar list [--from ISO] [--to ISO] [--days N] [--max N]
+//   google calendar busy-now                     prints how many busy timed events are in progress
+//   google tasks list [--list NAME] [--all]
+//   google tasks add --title T [--due YYYY-MM-DD] [--notes N] [--list NAME]
+//   google tasks done <task-id> [--list NAME]
+//   google contacts search <query>
+//
+// Output is JSON. Credentials come from .env (see docs/integrations/google.md).
+
+import http from "node:http";
+import { createInterface } from "node:readline";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const g = await import(path.join(here, "../lib/google-api.mjs"));
+const require = createRequire(import.meta.url);
+require(path.join(here, "../lib/load-env.js")).loadEnv();
+
+const argv = process.argv.slice(2);
+const [area, sub] = argv;
+
+function flag(name, def) {
+  const i = argv.indexOf(`--${name}`);
+  if (i === -1) return def;
+  const v = argv[i + 1];
+  return v === undefined || v.startsWith("--") ? true : v;
+}
+
+function usage() {
+  console.error("usage: google auth | check | calendar list|busy-now | tasks list|add|done | contacts search <q>");
+  process.exit(2);
+}
+
+const str = (v) => (typeof v === "string" ? v : undefined);
+const out = (v) => console.log(JSON.stringify(v, null, 2));
+
+function ask(q) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(q, (a) => { rl.close(); resolve(a.trim()); });
+  });
+}
+
+async function auth() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || (await ask("OAuth client ID: "));
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || (await ask("OAuth client secret: "));
+  if (!clientId || !clientSecret) usage();
+
+  // Loopback redirect: Google sends the browser back to a port on this host.
+  const server = http.createServer();
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const redirect = `http://127.0.0.1:${server.address().port}`;
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirect,
+    response_type: "code",
+    scope: g.SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+  });
+  console.error(`\nOpen this URL in a browser on this machine and approve access:\n\n${url}\n`);
+
+  const code = await new Promise((resolve, reject) => {
+    server.on("request", (req, res) => {
+      const q = new URL(req.url, redirect).searchParams;
+      res.end(q.get("code") ? "Merlin: Google access granted. You can close this tab." : "Merlin: no code received.");
+      if (q.get("code")) resolve(q.get("code"));
+      else if (q.get("error")) reject(new Error(q.get("error")));
+    });
+  });
+  server.close();
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirect, grant_type: "authorization_code" }),
+  });
+  const data = await res.json();
+  if (!data.refresh_token) {
+    console.error(`token exchange failed: ${data.error_description || data.error || res.status}`);
+    process.exit(1);
+  }
+  console.error("\nAdd these to .env:\n");
+  console.log(`GOOGLE_OAUTH_CLIENT_ID=${clientId}`);
+  console.log(`GOOGLE_OAUTH_CLIENT_SECRET=${clientSecret}`);
+  console.log(`GOOGLE_OAUTH_REFRESH_TOKEN=${data.refresh_token}`);
+}
+
+try {
+  if (area === "auth") {
+    await auth();
+  } else if (area === "check") {
+    await g.listTasks({ max: 1 });
+    out({ ok: true });
+  } else if (area === "calendar" && sub === "list") {
+    const from = flag("from") ? new Date(flag("from")) : new Date();
+    const to = flag("to") ? new Date(flag("to")) : new Date(from.getTime() + Number(flag("days", 2)) * 86400_000);
+    out(await g.listEvents({ from, to, max: Number(flag("max", 50)) }));
+  } else if (area === "calendar" && sub === "busy-now") {
+    const now = Date.now();
+    // timeMin filters on end time, so events that started earlier are included.
+    const events = await g.listEvents({ from: now, to: now + 60_000, max: 50 });
+    console.log(g.busyNow(events, now).length);
+  } else if (area === "tasks" && sub === "list") {
+    out(await g.listTasks({ list: flag("list", "@default"), showCompleted: flag("all", false) === true }));
+  } else if (area === "tasks" && sub === "add") {
+    const title = flag("title");
+    if (typeof title !== "string") usage();
+    out(await g.addTask({ list: flag("list", "@default"), title, due: str(flag("due")), notes: str(flag("notes")) }));
+  } else if (area === "tasks" && sub === "done") {
+    if (!argv[2] || argv[2].startsWith("--")) usage();
+    out(await g.completeTask({ list: flag("list", "@default"), taskId: argv[2] }));
+  } else if (area === "contacts" && sub === "search") {
+    if (!argv[2]) usage();
+    out(await g.searchContacts(argv.slice(2).join(" ")));
+  } else {
+    usage();
+  }
+} catch (e) {
+  console.error(`google: ${e.message}`);
+  process.exit(e instanceof g.GoogleAuthError ? 3 : 1);
+}

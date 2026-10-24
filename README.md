@@ -94,7 +94,7 @@ Merlin is deliberately a small, opinionated kernel — not a turnkey product. Th
 
 - **Populate Hum's awareness loop.** Empty on day 1. See [`docs/hum.md`](docs/hum.md).
 - **Populate your memory corpus.** Empty on day 1. See [`docs/memory.md`](docs/memory.md).
-- **Wire up integrations** — Gmail ([guide](docs/integrations/gmail.md)), Supabase ([guide](docs/integrations/supabase.md)), SMTP ([guide](docs/integrations/smtp.md)), or your own.
+- **Wire up integrations** — Gmail ([guide](docs/integrations/gmail.md)), Google Calendar/Tasks/Contacts ([guide](docs/integrations/google.md)), Supabase ([guide](docs/integrations/supabase.md)), SMTP ([guide](docs/integrations/smtp.md)), or your own.
 - **Write your own jobs.** Markdown playbooks. See [`docs/writing-a-job.md`](docs/writing-a-job.md).
 - **Set your Apple signing identity** — for the companion apps. See [`apps/companion/CODE-SIGNING.md`](apps/companion/CODE-SIGNING.md).
 

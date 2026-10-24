@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { listEvents } from "../../../lib/google-api.mjs";
 import { readStdinJson, emit, emitNull, stampRun } from "./_common.mjs";
 
 const HUM_STATE_FILE = path.join(
@@ -101,12 +101,7 @@ if (isMain) {
   const { situation: sit } = await readStdinJson();
 
   try {
-    const json = execSync(
-      "gog calendar list --account ${MERLIN_OWNER_EMAIL} --days 2 --max 30 --json 2>/dev/null",
-      { encoding: "utf8", timeout: 10000 },
-    );
-    const data = JSON.parse(json);
-    const rawEvents = data?.events || data?.items || data || [];
+    const rawEvents = await listEvents({ from: Date.now(), to: Date.now() + 2 * 86400_000, max: 30 });
     const events = filterScannableEvents(rawEvents);
 
     const now = Date.now();
@@ -189,6 +184,6 @@ if (isMain) {
       },
     });
   } catch (e) {
-    emitNull(`gog calendar failed: ${e.message}`);
+    emitNull(`google calendar failed: ${e.message}`);
   }
 }

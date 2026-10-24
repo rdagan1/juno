@@ -47,11 +47,10 @@ For each item (oldest first):
    ```
    Then apply the long-form delivery rule (label `personal` + star + mark-read, no `p1`), using the same Gmail lookup loop as Step B of `jobs/morning-digest.md` with this subject.
 
-3. Tasks for explicit deadlines. For each `highlights[]` entry of type `exam` or `assignment` with a non-null `date`, and each `action_items[]` entry with a non-null `due`, create a Google Task. First check for a duplicate (`gog tasks list @default --plain`, same course + same date), then:
-   ```bash
-   gog tasks add @default --title "<course>: <short note>" --due <YYYY-MM-DD> \
-     --notes "From lecture '<name>' at <timestamp>. <quote>" --no-input
-   ```
+3. Tasks for explicit deadlines. For each `highlights[]` entry of type `exam` or `assignment` with a non-null `date`, and each `action_items[]` entry with a non-null `due`, create a Google Task. First check for a duplicate (`tasks_list`, same course + same date), then call `tasks_add` with:
+   - `title`: `<course>: <short note>`
+   - `due`: `<YYYY-MM-DD>`
+   - `notes`: `From lecture '<name>' at <timestamp>. <quote>`
    Tasks only: never a calendar event with attendees (see `agent/CLAUDE.md` § Calendar Invitations). Highlights flagged `"auto": true` came from the keyword safety net, not the model; do not make tasks from them.
 
 4. Mark it delivered:

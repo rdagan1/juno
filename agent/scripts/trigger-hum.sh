@@ -80,17 +80,11 @@ fi
 # Calendar busy gate: skip if the user is in a meeting right now.
 # Transparent/free events (e.g. shared-calendar-only entries) don't block.
 if [ "$MODE" != "manual" ]; then
-  GOG_BIN="gog"
-  if [ -x "$GOG_BIN" ]; then
-    NOW_ISO=$(TZ="$USER_TZ" date -Iseconds)
-    FOUR_AGO=$(TZ="$USER_TZ" date -v-4H -Iseconds)
-    IN_MEETING=$("$GOG_BIN" calendar list --json --results-only --from "$FOUR_AGO" --to "$NOW_ISO" --all 2>/dev/null | \
-      jq -r --arg now "$NOW_ISO" \
-        '[.[] | select(.start.dateTime != null and .end.dateTime != null and .end.dateTime > $now and (.transparency // "opaque") != "transparent")] | length')
-    if [ "${IN_MEETING:-0}" -gt 0 ]; then
-      log "skip:in_meeting"
-      exit 0
-    fi
+  # Prints nothing (→ 0) when Google isn't configured, so the gate fails open.
+  IN_MEETING=$(node "${MERLIN_HOME}/bin/google" calendar busy-now 2>/dev/null)
+  if [ "${IN_MEETING:-0}" -gt 0 ] 2>/dev/null; then
+    log "skip:in_meeting"
+    exit 0
   fi
 fi
 

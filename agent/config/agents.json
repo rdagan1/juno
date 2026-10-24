@@ -18,8 +18,7 @@
         "mcp__claude_ai_Gmail__*",
         "mcp__claude_ai_Google_Calendar__*",
         "mcp__claude_ai_Slack__*",
-        "mcp__supabase-merlin__*",
-        "mcp__gtasks__*"
+        "mcp__supabase-merlin__*"
       ],
       "remoteControlPrefix": "chat-agent",
       "supervisor": {
@@ -44,8 +43,7 @@
         "mcp__claude_ai_Gmail__*",
         "mcp__claude_ai_Google_Calendar__*",
         "mcp__claude_ai_Slack__*",
-        "mcp__supabase-merlin__*",
-        "mcp__gtasks__*"
+        "mcp__supabase-merlin__*"
       ],
       "remoteControlPrefix": "ops-agent",
       "supervisor": {

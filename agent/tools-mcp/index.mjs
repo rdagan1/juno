@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 // turns. The `WIKI_LOG_CALLER=mcp` env is no longer needed because we pass
 // caller="mcp" explicitly via ws.logAccess.
 const ws = require("../../lib/wiki-store.js");
+// Google Tasks + Contacts over REST with the owner's OAuth token (.env).
+import * as google from "../../lib/google-api.mjs";
 
 const exec = promisify(execFile);
 const MERLIN_HOME = process.env.MERLIN_HOME || `${process.env.HOME}/Dev/merlin`;
@@ -34,6 +36,14 @@ async function run(cmd, args = [], opts = {}) {
     return (stdout || stderr || "Done").trim();
   } catch (err) {
     return `Error: ${err.stderr || err.message}`;
+  }
+}
+
+async function g(fn) {
+  try {
+    return JSON.stringify(await fn(), null, 2);
+  } catch (err) {
+    return `Error: ${err.message}`;
   }
 }
 
@@ -81,8 +91,10 @@ block here.
 ### Spam filter (REQUIRES \`bin/spam-filter\` — supply your own)
 - spam_block / spam_list
 
-### Google Contacts (REQUIRES \`gog\` CLI — see docs/dependencies.md § Google Calendar / Tasks / Contacts)
+### Google Tasks + Contacts (REQUIRES Google OAuth in .env — see docs/integrations/google.md)
+- tasks_list / tasks_add / tasks_complete
 - contacts_search / contacts_get / contacts_list
+Calendar is not here: use the Google Calendar connector (mcp__claude_ai_Google_Calendar__*).
 `,
   }
 );
@@ -125,19 +137,48 @@ const TOOLS = [
     name: "contacts_search",
     description: "Search the user's Google Contacts by name, email, or phone. Use this whenever a phone number or email address is needed for anyone the user knows — Google Contacts is the canonical source. Returns JSON.",
     schema: { type: "object", properties: { query: { type: "string", description: "Name, email, or phone fragment" } }, required: ["query"] },
-    run: (a) => run("gog", ["contacts", "search", a.query, "-j"]),
+    run: (a) => g(() => google.searchContacts(a.query)),
   },
   {
     name: "contacts_get",
     description: "Fetch a specific Google Contacts record by its resourceName (e.g. 'people/c12345'), as returned by contacts_search. Returns JSON.",
     schema: { type: "object", properties: { resource_name: { type: "string" } }, required: ["resource_name"] },
-    run: (a) => run("gog", ["contacts", "get", a.resource_name, "-j"]),
+    run: (a) => g(() => google.getContact(a.resource_name)),
   },
   {
     name: "contacts_list",
-    description: "List the user's Google Contacts (paginated). Use contacts_search when possible — this is for enumeration.",
-    schema: { type: "object", properties: {} },
-    run: () => run("gog", ["contacts", "list", "-j"]),
+    description: "List the user's Google Contacts (paginated). Use contacts_search when possible — this is for enumeration. Pass page_token from a previous call's nextPageToken for the next page.",
+    schema: { type: "object", properties: { page_token: { type: "string" } } },
+    run: (a) => g(() => google.listContacts({ pageToken: a.page_token })),
+  },
+
+  // ── Google Tasks ──
+  {
+    name: "tasks_list",
+    description: "List the user's Google Tasks (default list). Open tasks only unless show_completed. Each task has id, title, notes, due (date part is the due day), status. Returns JSON.",
+    schema: { type: "object", properties: { list: { type: "string", description: "List title or id (default '@default')" }, show_completed: { type: "boolean" } } },
+    run: (a) => g(() => google.listTasks({ list: a.list || "@default", showCompleted: !!a.show_completed })),
+  },
+  {
+    name: "tasks_add",
+    description: "Create a Google Task. due is YYYY-MM-DD in the user's timezone (date only; Google Tasks has no due time). Check tasks_list for a duplicate first. Returns the created task.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        due: { type: "string", description: "YYYY-MM-DD" },
+        notes: { type: "string" },
+        list: { type: "string", description: "List title or id (default '@default')" },
+      },
+      required: ["title"],
+    },
+    run: (a) => g(() => google.addTask({ list: a.list || "@default", title: a.title, due: a.due, notes: a.notes })),
+  },
+  {
+    name: "tasks_complete",
+    description: "Mark a Google Task completed by id (from tasks_list).",
+    schema: { type: "object", properties: { task_id: { type: "string" }, list: { type: "string" } }, required: ["task_id"] },
+    run: (a) => g(() => google.completeTask({ list: a.list || "@default", taskId: a.task_id })),
   },
 
   // ── Email Memory ──

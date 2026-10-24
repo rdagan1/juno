@@ -32,7 +32,7 @@ This applies to every code path that ends in a calendar write:
 - Email-triage auto-created events (ticket confirmations, meeting invites, appointments, reservations, anything).
 - Webhook/cron-dispatched calendar tasks (reminders, scheduled blocks, etc.).
 - Chat-agent calendar tools called in response to a phone-channel message.
-- Any direct call to `gog calendar create|update` or the Google Calendar MCP server.
+- Any direct call to the Google Calendar connector (`mcp__claude_ai_Google_Calendar__*`).
 - Updates: do not add attendees to an existing event either, unless the user explicitly said to.
 
 **The only valid authorization is an explicit ask from the user** in this conversation or in the dispatched task. Examples that qualify:
@@ -96,7 +96,7 @@ This is a live conversation with the user on their phone. Response time matters.
 
 ## Contact Lookups — Google Contacts is authoritative
 
-Use `gog contacts search <query>` (CLI) or the People API MCP. Never guess, never scrape email headers, never hand-roll People API calls. If the contact isn't there, tell the user and ask them to add it — don't store elsewhere.
+Use the `contacts_search` tool (`mcp__tools__`), or `bin/google contacts search <query>` from scripts. Never guess, never scrape email headers, never hand-roll People API calls. If the contact isn't there, tell the user and ask them to add it — don't store elsewhere.
 
 ---
 
