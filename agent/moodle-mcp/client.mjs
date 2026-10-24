@@ -123,3 +123,14 @@ export function createMoodleClient({
 
   return { base, call, getSiteInfo, download, getToken };
 }
+
+// Build a client from the standard MOODLE_* env vars (after .env is loaded).
+export function clientFromEnv(env = process.env) {
+  return createMoodleClient({
+    url: env.MOODLE_URL,
+    token: env.MOODLE_TOKEN,
+    username: env.MOODLE_USERNAME,
+    password: env.MOODLE_PASSWORD,
+    service: env.MOODLE_SERVICE || undefined,
+  });
+}

@@ -9,6 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { checkChanges } from "./changes.mjs";
 
 const exec = promisify(execFile);
 
@@ -74,7 +75,20 @@ async function extractText(filePath, contentType, buffer) {
   return null;
 }
 
-export function buildTools(client, { filesDir, timeZone } = {}) {
+// Render unix-second fields of a changes report as readable dates.
+export function formatChanges(report, when) {
+  const DATE_FIELDS = ["due", "old_due", "new_due", "posted"];
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, DATE_FIELDS.includes(k) && typeof x === "number" ? when(x) || "none" : walk(x)]));
+    }
+    return v;
+  };
+  return walk(report);
+}
+
+export function buildTools(client, { filesDir, stateDir, timeZone } = {}) {
   const when = makeDateFormatter(timeZone);
   const now = () => Math.floor(Date.now() / 1000);
   const json = (x) => JSON.stringify(x, null, 2);
@@ -302,7 +316,14 @@ export function buildTools(client, { filesDir, timeZone } = {}) {
       description: "The student's grade report for one course: every grade item with grade, range, percentage, weight, and feedback.",
       schema: { type: "object", properties: { course_id: { type: "number" } }, required: ["course_id"] },
       run: async (a) => {
-        const r = await client.call("gradereport_user_get_grade_items", { courseid: a.course_id, userid: await userId() });
+        let r;
+        try {
+          r = await client.call("gradereport_user_get_grade_items", { courseid: a.course_id, userid: await userId() });
+        } catch (err) {
+          // Some sites hide the grade report from the mobile API. Grades on
+          // individual assignments are still visible via moodle_assignment_status.
+          return json({ course_id: a.course_id, available: false, reason: err.message, hint: "Use moodle_assignment_status per assignment for its grade and feedback." });
+        }
         const g = r.usergrades?.[0];
         if (!g) return json({ course_id: a.course_id, items: [] });
         return json({
@@ -384,6 +405,21 @@ export function buildTools(client, { filesDir, timeZone } = {}) {
             files: (d.attachments || []).map((f) => ({ filename: f.filename, file_url: f.fileurl })),
           })),
         );
+      },
+    },
+    {
+      name: "moodle_changes",
+      description: "What's new on Moodle since the last check for this cursor: new/updated files, new activities, new assignments, due-date changes, new announcements, and new grades across active courses. The first call for a cursor only records a baseline. Cursors are independent (the study digest uses 'digest', hum uses 'hum'); use the default 'chat' when the student asks directly.",
+      schema: {
+        type: "object",
+        properties: {
+          cursor: { type: "string", description: "Read position name (default 'chat')" },
+          mark_seen: { type: "boolean", description: "Advance the cursor after reporting (default true). false = peek." },
+        },
+      },
+      run: async (a) => {
+        const r = await checkChanges(client, { stateDir, cursor: a.cursor || "chat", markSeen: a.mark_seen !== false });
+        return json(formatChanges(r, when));
       },
     },
     {

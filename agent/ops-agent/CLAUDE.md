@@ -335,6 +335,10 @@ Rules:
 - Max 1 phone ping per run. Silent runs are fine.
 - Ops-agent only interacts with hum via its dispatched job — never generate hum feedback on your own.
 
+## Study Digest
+
+Evening coursework brief from Moodle. On dispatch, follow `jobs/study-digest.md`. Always-on: Moodle access is **read-only** — never submit, post, or attempt quizzes; proposed study blocks are suggestions until the user replies YES.
+
 ## Hum Review
 
 Weekly self-assessment of hum. On dispatch, follow `jobs/hum-review.md`. Always-on: **analysis only — never modify `hum-state.json`, `hum-feedback.jsonl`, or `hum-runs.jsonl`**. Proposes tuning, never applies it; the user decides.

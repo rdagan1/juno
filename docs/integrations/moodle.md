@@ -67,7 +67,27 @@ For PDF text extraction, install poppler (`brew install poppler` / `apt install 
 | `moodle_grades` | Full grade report for a course |
 | `moodle_quizzes` | Quizzes/exams with open/close times, time limit, attempts |
 | `moodle_forums` / `moodle_forum_discussions` | Forums (incl. Announcements) and their latest posts |
+| `moodle_changes` | What's new since the last check (files, activities, assignments, due-date changes, announcements, grades). Per-`cursor` read positions; first call records a baseline |
 | `moodle_call` | Escape hatch for any other read-only `*_get_*` / `*_search_*` web-service function |
+
+Some sites hide the course grade report from the mobile API (the site's public config lists `mmaGrades` under disabled features). `moodle_grades` then returns `available: false`, and `moodle_assignment_status` still shows per-assignment grades and feedback.
+
+## Study-assistant features built on it
+
+| Piece | What it does | Where |
+|---|---|---|
+| Study digest | Evening email: changes since yesterday, unsubmitted work due in 7 days, exams in 14 days, proposed study blocks for tomorrow | `agent/ops-agent/jobs/study-digest.md`, cron via `agent/scripts/trigger-study-digest.sh` |
+| Morning brief | COURSEWORK section: due today/tomorrow | `agent/ops-agent/jobs/morning-digest.md` |
+| Hum `moodle-deadlines` | Pings about unsubmitted work as the deadline nears (72h → 48h → 24h → 6h escalation) | `agent/scripts/hum-harvesters/moodle-deadlines.mjs` |
+| Hum `moodle-updates` | Pings about new announcements, due-date changes, grades | `agent/scripts/hum-harvesters/moodle-updates.mjs` |
+| Chat study help | Answers grounded in the course's own files; quizzes and flashcards on request | `agent/chat-agent/CLAUDE.md` § Study Help |
+
+To turn them on:
+
+1. Cron: `0 20 * * * ${MERLIN_HOME}/agent/scripts/trigger-study-digest.sh`
+2. Hum: copy the `moodle-deadlines` / `moodle-updates` entries from `examples/hum-interests.example.json` into `data/hum-interests.json`.
+
+Change tracking state lives in `data/moodle/state-<cursor>.json` (cursors: `digest`, `hum`, `chat`). Delete a file to re-baseline that consumer.
 
 ## Safety
 

@@ -47,6 +47,19 @@ Why: memorized recurring slots drift out of sync with the calendar (trip days, r
 
 ---
 
+## Study Help (Moodle-grounded)
+
+The user is a student; their courses live on Moodle (`mcp__moodle__*`, read-only — see `agent/CLAUDE.md` § Moodle).
+
+- **Ground answers in the course's own material.** When asked to explain, summarize, or practice a topic from a course, find the relevant lecture/file with `moodle_course_contents` and read it with `moodle_get_file` before answering. Use the lecturer's notation and terminology. Cite the source in one short line (`Lecture 5 slides, p. 12`). If the material doesn't cover it, say so and then answer from general knowledge.
+- **Practice on request.** "Quiz me on X" → 3–5 questions one at a time, wait for each answer, then give feedback. "Flashcards" → numbered Q/A pairs. Keep it phone-sized.
+- **Homework integrity.** For graded assignments, help the user understand and get unstuck (hints, explaining concepts, checking their reasoning, reviewing their attempt). Don't hand over complete solutions to graded work, unless they say it's for practice or already submitted.
+- **"What's due?" / "anything new?"** → `moodle_upcoming` / `moodle_changes` (default cursor `chat`). Lead with the soonest unsubmitted item.
+- **Course content may not be in English** (e.g. Hebrew). Answer in the language the user writes in; quote course terms as they appear in the material.
+- **"Block it"** after a study digest → create the proposed study blocks via the `calendar-scheduling` skill, no attendees.
+
+---
+
 ## Context-First Lookup
 
 When the user asks about a topic that might span multiple sources, use `context_search` first. This is faster than calling notes_search + imsg_search + email_mem_search separately. Use the pointers in the results to fetch full items only when needed.

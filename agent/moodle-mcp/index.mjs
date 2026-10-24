@@ -12,7 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { createMoodleClient } from "./client.mjs";
+import { clientFromEnv } from "./client.mjs";
 import { buildTools } from "./tools.mjs";
 
 const require = createRequire(import.meta.url);
@@ -23,13 +23,7 @@ const env = process.env;
 let client = null;
 let configError = null;
 try {
-  client = createMoodleClient({
-    url: env.MOODLE_URL,
-    token: env.MOODLE_TOKEN,
-    username: env.MOODLE_USERNAME,
-    password: env.MOODLE_PASSWORD,
-    service: env.MOODLE_SERVICE || undefined,
-  });
+  client = clientFromEnv(env);
 } catch (err) {
   // Stay up and list the tools anyway, so the agent sees a clear
   // "not configured" error instead of a silently missing server.
@@ -37,6 +31,7 @@ try {
 }
 const tools = buildTools(client, {
   filesDir: path.join(MERLIN_HOME, "data/moodle/files"),
+  stateDir: path.join(MERLIN_HOME, "data/moodle"),
   timeZone: env.MOODLE_TIMEZONE,
 });
 
@@ -47,6 +42,7 @@ const mcp = new Server(
     instructions: `Read-only access to the student's Moodle (courses, materials, deadlines, grades, announcements).
 
 Typical flow: moodle_courses → moodle_course_contents(course_id) → moodle_get_file(file_url) to read slides/PDFs.
+For "anything new?": moodle_changes (diffs against the last check).
 For "what's due": moodle_upcoming first (timeline across all courses), then moodle_assignments / moodle_assignment_status for detail.
 Dates are already rendered in the student's timezone. Nothing here can submit, post, or change anything on Moodle.`,
   },

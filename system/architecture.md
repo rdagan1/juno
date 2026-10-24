@@ -203,7 +203,7 @@ The hum-intent file (a markdown doc you author) defines what the loop should and
 
 Why: most agent work is "run this script and read the output." Going through MCP gives you (a) structured tool-call traces for the conversation history, (b) per-tool permissioning via `allowedTools`, and (c) a uniform shape no matter what the script is written in (bash, Node, Python).
 
-**Moodle MCP** (`agent/moodle-mcp/`) is a separate, read-only MCP server (`mcp__moodle__*`) loaded by both agents. It wraps a Moodle site's Web Services REST API (the same API the Moodle mobile app uses) to pull courses, course materials (files are downloaded to `data/moodle/files/<course_id>/` with text extracted), deadlines, assignments + submission status, quizzes, grades, and forum announcements. Auth is `MOODLE_URL` + `MOODLE_TOKEN` (or username/password) from `.env`. It cannot submit, post, or modify anything. Setup: `docs/integrations/moodle.md`.
+**Moodle MCP** (`agent/moodle-mcp/`) is a separate, read-only MCP server (`mcp__moodle__*`) loaded by both agents. It wraps a Moodle site's Web Services REST API (the same API the Moodle mobile app uses) to pull courses, course materials (files are downloaded to `data/moodle/files/<course_id>/` with text extracted), deadlines, assignments + submission status, quizzes, grades, forum announcements, and a change feed (`moodle_changes`) that powers the `study-digest` job and the `moodle-*` hum harvesters. Auth is `MOODLE_URL` + `MOODLE_TOKEN` (or username/password) from `.env`. It cannot submit, post, or modify anything. Setup: `docs/integrations/moodle.md`.
 
 When you add a new CLI under `bin/`, it shows up in the agent's tool list automatically. There's nothing to register.
 
@@ -359,6 +359,7 @@ You're starting with a working kernel and a small reference set, not a turnkey a
 ## Recent changes
 
 - **2026-10-24 — Moodle integration.** Added `agent/moodle-mcp/` (read-only Moodle Web Services MCP server, 12 `moodle_*` tools), registered in `agent/supervisor/mcp-config.json` + `chat-mcp-config.json` and allowlisted as `mcp__moodle__*` in `agent/config/agents.json`. Token helper `bin/moodle-token`. Guide: `docs/integrations/moodle.md`. First step toward customizing Merlin as a study assistant.
+- **2026-10-24 — Study assistant on Moodle.** `moodle_changes` tool (`agent/moodle-mcp/changes.mjs`) diffs a snapshot of active courses against per-cursor state in `data/moodle/state-<cursor>.json`. New `study-digest` job (`jobs/study-digest.md`, 20:00 daily, registered in `system/tasks.json`); morning-digest gains a COURSEWORK section; hum harvesters `moodle-deadlines` + `moodle-updates` (opt-in via `data/hum-interests.json`); chat-agent § Study Help (material-grounded answers, quizzing, homework-integrity rule). `moodle_grades` degrades gracefully on sites that hide the grade report.
 
 ---
 
